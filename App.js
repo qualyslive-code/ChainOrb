@@ -11,7 +11,8 @@ const COLS = 6;
 const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff'];
+const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a'];
+const ROCK = 6;
 // child offset by orientation: 0 up, 1 right, 2 down, 3 left
 const OFF = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
@@ -19,9 +20,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rnd = (n) => 1 + Math.floor(Math.random() * n);
 const newPair = (n = 3) => ({ a: rnd(n), b: rnd(n) });
 const levelCfg = (L) => ({
-  goal: 300 + (L - 1) * 200,
+  goal: 300 + (L - 1) * 150,
   colors: Math.min(5, 3 + Math.floor((L - 1) / 4)),
   speed: Math.max(300, 700 - (L - 1) * 25),
+  rocks: L >= 5 ? Math.min(14, (L - 4) * 2) : 0,
+  moves: L % 3 === 0 ? 22 + Math.floor(L / 3) : 0,
 });
 const emptyBoard = () => Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 const spawn = (pair) => ({ r: 1, c: 2, o: 0, a: pair.a, b: pair.b });
@@ -72,7 +75,7 @@ function findGroups(b) {
   const groups = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (!b[r][c] || seen[r][c]) continue;
+      if (!b[r][c] || b[r][c] === ROCK || seen[r][c]) continue;
       const col = b[r][c];
       const stack = [[r, c]];
       const g = [];
@@ -178,12 +181,18 @@ export default function App() {
     colors: 3,
     base: 700,
     unlocked: 1,
+    moves: 0,
+    stars: {},
+    rings: [],
+    earned: 1,
   }).current;
 
   const [, setT] = useState(0);
   const render = useCallback(() => setT((t) => t + 1), []);
   const alive = useRef(true);
   const shake = useRef(new Animated.Value(0)).current;
+  const burst = useRef(new Animated.Value(0)).current;
+  const float = useRef(new Animated.Value(0)).current;
 
   const buzz = (n) => {
     try {
@@ -208,8 +217,15 @@ export default function App() {
     G.goal = cfg.goal;
     G.colors = cfg.colors;
     G.base = cfg.speed;
+    G.moves = cfg.moves;
     G.next = newPair(cfg.colors);
     G.board = emptyBoard();
+    for (let i = 0; i < cfg.rocks; i++) {
+      const r = ROWS - 1 - Math.floor(Math.random() * 4);
+      const c = Math.floor(Math.random() * COLS);
+      G.board[r][c] = ROCK;
+    }
+    gravity(G.board);
     G.score = 0;
     G.chain = 0;
     G.maxChain = 0;
@@ -235,6 +251,12 @@ export default function App() {
 
   const win = () => {
     G.status = 'won';
+    G.earned =
+      1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= Math.ceil(G.goal / 30) + 2 ? 1 : 0);
+    if (G.earned > (G.stars[G.level] || 0)) {
+      G.stars[G.level] = G.earned;
+      AsyncStorage.setItem('stars', JSON.stringify(G.stars)).catch(() => {});
+    }
     G.piece = null;
     G.banner = '';
     if (G.level < MAX_LEVEL && G.level + 1 > G.unlocked) {
@@ -259,15 +281,30 @@ export default function App() {
       if (!groups.length) break;
       G.chain++;
       const flat = groups.flat();
-      G.popping = new Set(flat.map(([r, c]) => r * COLS + c));
+      const hit = new Set(flat.map(([r, c]) => r * COLS + c));
+      for (const [r, c] of flat) {
+        for (const [dy, dx] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const y = r + dy;
+          const x = c + dx;
+          if (y >= 0 && y < ROWS && x >= 0 && x < COLS && G.board[y][x] === ROCK) {
+            hit.add(y * COLS + x);
+          }
+        }
+      }
+      const cells = [...hit].map((k) => [Math.floor(k / COLS), k % COLS]);
+      G.rings = cells.map(([r, c]) => ({ r, c, col: G.board[r][c] }));
+      G.popping = hit;
+      burst.setValue(0);
+      Animated.timing(burst, { toValue: 1, duration: 280, useNativeDriver: true }).start();
       if (G.chain >= 2) G.banner = `x${G.chain} CHAIN`;
       render();
       buzz(G.chain);
       if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
       await sleep(260);
       G.score += flat.length * 10 * Math.pow(2, G.chain - 1);
-      for (const [r, c] of flat) G.board[r][c] = 0;
+      for (const [r, c] of cells) G.board[r][c] = 0;
       G.popping = new Set();
+      G.rings = [];
       render();
       await sleep(110);
     }
@@ -280,6 +317,10 @@ export default function App() {
 
     if (G.score >= G.goal) {
       win();
+      return;
+    }
+    if (G.moves && G.placed >= G.moves) {
+      gameOver();
       return;
     }
     const p = spawn(G.next);
@@ -367,6 +408,20 @@ export default function App() {
         }
       })
       .catch(() => {});
+    AsyncStorage.getItem('stars')
+      .then((v) => {
+        if (v) {
+          G.stars = JSON.parse(v) || {};
+          render();
+        }
+      })
+      .catch(() => {});
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(float, { toValue: 1, duration: 2600, useNativeDriver: true }),
+        Animated.timing(float, { toValue: 0, duration: 2600, useNativeDriver: true }),
+      ])
+    ).start();
     let t;
     const loop = () => {
       step();
@@ -382,7 +437,7 @@ export default function App() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 345) / ROWS))
+    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 360) / ROWS))
   );
 
   const display = G.board.map((row) => row.slice());
@@ -401,6 +456,11 @@ export default function App() {
           <Text style={styles.label}>SCORE</Text>
           <Text style={styles.score}>{G.score}</Text>
           <Text style={styles.small}>GOAL {G.goal}</Text>
+          {G.moves ? (
+            <Text style={[styles.small, { color: '#ffd23b' }]}>
+              {Math.max(0, G.moves - G.placed)} MOVES
+            </Text>
+          ) : null}
         </View>
         <View style={{ alignItems: 'center' }}>
           <Text style={styles.label}>NEXT</Text>
@@ -432,6 +492,27 @@ export default function App() {
             </View>
           ))}
 
+          {G.rings.map((o) => (
+            <Animated.View
+              key={`${o.r}-${o.c}`}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: 2 + o.c * cell,
+                top: 2 + o.r * cell,
+                width: cell,
+                height: cell,
+                borderRadius: cell,
+                borderWidth: 3,
+                borderColor: COLORS[o.col],
+                opacity: burst.interpolate({ inputRange: [0, 1], outputRange: [0.9, 0] }),
+                transform: [
+                  { scale: burst.interpolate({ inputRange: [0, 1], outputRange: [1, 2.2] }) },
+                ],
+              }}
+            />
+          ))}
+
           {G.banner ? (
             <View style={styles.bannerWrap} pointerEvents="none">
               <Text style={styles.banner}>{G.banner}</Text>
@@ -442,6 +523,28 @@ export default function App() {
             <View style={styles.overlay}>
               {G.status === 'menu' ? (
                 <>
+                  {[1, 2, 3, 4, 5].map((k) => (
+                    <Animated.View
+                      key={k}
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        left: `${k * 16 - 8}%`,
+                        top: k % 2 ? '8%' : '78%',
+                        opacity: 0.35,
+                        transform: [
+                          {
+                            translateY: float.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0, k % 2 ? 26 : -26],
+                            }),
+                          },
+                        ],
+                      }}
+                    >
+                      <Orb color={k} size={34} />
+                    </Animated.View>
+                  ))}
                   <Text style={styles.title}>CHAINORB</Text>
                   <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
                   <View style={styles.grid}>
@@ -455,6 +558,11 @@ export default function App() {
                           style={[styles.lvl, !open && styles.lvlLocked]}
                         >
                           <Text style={styles.lvlTxt}>{open ? L : '🔒'}</Text>
+                          {open ? (
+                            <Text style={styles.stars}>
+                              {'★'.repeat(G.stars[L] || 0) + '☆'.repeat(3 - (G.stars[L] || 0))}
+                            </Text>
+                          ) : null}
                         </Pressable>
                       );
                     })}
@@ -463,8 +571,17 @@ export default function App() {
               ) : (
                 <>
                   <Text style={styles.title}>
-                    {G.status === 'won' ? `LEVEL ${G.level} CLEAR` : 'GAME OVER'}
+                    {G.status === 'won'
+                      ? `LEVEL ${G.level} CLEAR`
+                      : G.moves && G.placed >= G.moves
+                      ? 'OUT OF MOVES'
+                      : 'GAME OVER'}
                   </Text>
+                  {G.status === 'won' && (
+                    <Text style={styles.bigStars}>
+                      {'★'.repeat(G.earned) + '☆'.repeat(3 - G.earned)}
+                    </Text>
+                  )}
                   <Text style={styles.overScore}>
                     {G.score} / {G.goal} pts  •  best chain x{G.maxChain}
                   </Text>
@@ -534,7 +651,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
   },
-  title: { color: '#fff', fontSize: 28, fontWeight: '900', letterSpacing: 4 },
+  title: { color: '#fff', textShadowColor: '#2bff88', textShadowRadius: 16, fontSize: 28, fontWeight: '900', letterSpacing: 4 },
   overScore: { color: '#aaa', marginTop: 8, fontSize: 15 },
   play: {
     marginTop: 22,
@@ -560,8 +677,10 @@ const styles = StyleSheet.create({
   bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '92%', marginTop: 14 },
-  lvl: { width: 46, height: 46, margin: 4, borderRadius: 12, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
+  lvl: { width: 48, height: 56, margin: 4, borderRadius: 12, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
   lvlLocked: { borderColor: '#2a2a4a', opacity: 0.5 },
+  stars: { color: '#ffd23b', fontSize: 9, marginTop: 2 },
+  bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
   lvlTxt: { color: '#fff', fontSize: 18, fontWeight: '800' },
   controls: { width: '94%', marginTop: 10 },
   row: { flexDirection: 'row', marginVertical: 4 },
