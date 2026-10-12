@@ -13,9 +13,10 @@ const COLS = 6;
 const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b'];
+const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b', '#9a9ac0'];
 const ROCK = 6;
 const BOMB = 7;
+const CRACK = 8;
 // child offset by orientation: 0 up, 1 right, 2 down, 3 left
 const OFF = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
@@ -106,6 +107,44 @@ function findGroups(b) {
   }
   return groups;
 }
+
+/* ============================== REALMS & LEVELS ============================== */
+const REALMS = [
+  { name: 'SAVANNA DAWN', bg: '#150c06', board: '#21130a', border: '#7a4420', accent: '#ffb347' },
+  { name: 'LAKE NIGHT', bg: '#05121a', board: '#09202c', border: '#1d6272', accent: '#3be0c8' },
+  { name: 'RWENZORI ICE', bg: '#09121f', board: '#0f1f38', border: '#4a7ab0', accent: '#9fd8ff' },
+  { name: 'KAMPALA NEON', bg: '#0a0a14', board: '#11111f', border: '#4a2a6a', accent: '#ff3bd4' },
+];
+const realmOf = (L) => Math.min(3, Math.floor((L - 1) / 5));
+// t: score | chain | rocks | pairs.  g goal, c colors, s speed ms, m move limit,
+// rocks random rocks, rain = a rock falls every N pairs, pre = preset rows (1-5 orbs, 6 rock, 8 cracked)
+const LEVELS = [
+  { t: 'score', g: 200, c: 3, s: 900, coach: 'Match 4 of a color to pop them' },
+  {
+    t: 'chain', g: 3, c: 3, s: 900,
+    pre: ['...2..', '..22..', '..33..', '3311..', '2322..'],
+    seq: [[1, 1]],
+    coach: 'Slide the red pair right, then DROP',
+  },
+  { t: 'score', g: 350, c: 3, s: 800, m: 30, coach: 'Moves are limited. Make each one count' },
+  { t: 'score', g: 450, c: 4, s: 760, coach: 'A new color joins' },
+  { t: 'score', g: 500, c: 4, s: 740, rocks: 2, coach: 'Grey rocks pop when a pop touches them' },
+  { t: 'rocks', c: 4, s: 720, pre: ['..66..', '..66..'], rocks: 3, coach: 'Clear every rock' },
+  { t: 'chain', g: 3, c: 4, s: 700, coach: 'Reach a x3 chain' },
+  { t: 'score', g: 700, c: 3, s: 450, coach: 'Faster. Stay calm' },
+  { t: 'score', g: 600, c: 4, s: 700, m: 24, pre: ['.1..3.', '212.31', '121323'], coach: 'A crowded board' },
+  { t: 'score', g: 1200, c: 4, s: 640, m: 34, rocks: 5, coach: 'BOSS: the Lake Spirit' },
+  { t: 'score', g: 600, c: 4, s: 700 },
+  { t: 'pairs', g: 28, c: 4, s: 640, rain: 4, coach: 'Rocks fall from above. Survive' },
+  { t: 'score', g: 900, c: 4, s: 640, rocks: 2, pre: ['8..8..'], coach: 'Cracked rocks need two hits' },
+  { t: 'chain', g: 4, c: 4, s: 620, coach: 'Reach a x4 chain' },
+  { t: 'pairs', g: 30, c: 4, s: 600, rain: 3, coach: 'Faster rain' },
+  { t: 'score', g: 1000, c: 5, s: 680, coach: 'Five colors' },
+  { t: 'rocks', c: 5, s: 650, pre: ['8..8..', '.8..8.'], coach: 'Break every cracked rock' },
+  { t: 'score', g: 2000, c: 5, s: 560, coach: 'Marathon. Keep the chains coming' },
+  { t: 'pairs', g: 36, c: 5, s: 560, rain: 3, rocks: 4, coach: 'Gauntlet' },
+  { t: 'score', g: 2600, c: 5, s: 520, m: 40, rocks: 8, coach: 'FINAL BOSS: Kampala Neon' },
+];
 
 /* ============================== SOUND ============================== */
 // Every sound is synthesized in code at startup: no audio files.
@@ -244,8 +283,8 @@ function Orb({ color, size, popping, worry }) {
           flex: 1,
           borderRadius: size,
           backgroundColor: popping ? '#ffffff' : color === BOMB ? '#2a1408' : COLORS[color],
-          borderWidth: color === BOMB ? 3 : 0,
-          borderColor: '#ff8a3b',
+          borderWidth: color === BOMB ? 3 : color === CRACK ? 2 : 0,
+          borderColor: color === CRACK ? '#e0e0ff' : '#ff8a3b',
           shadowColor: COLORS[color],
           shadowOpacity: 1,
           shadowRadius: 8,
@@ -348,7 +387,29 @@ export default function App() {
   const shake = useRef(new Animated.Value(0)).current;
   const burst = useRef(new Animated.Value(0)).current;
   const float = useRef(new Animated.Value(0)).current;
-  const np = () => newPair(G.colors, (G.fails[G.level] || 0) >= 2 ? 0.4 : 0);
+  const np = () => {
+    if (G.seq && G.seq.length) {
+      const q = G.seq.shift();
+      return { a: q[0], b: q[1] };
+    }
+    return newPair(G.colors, (G.fails[G.level] || 0) >= 2 ? 0.4 : 0);
+  };
+  const rocksLeft = () => G.board.flat().filter((v) => v === ROCK || v === CRACK).length;
+  const goalMet = () =>
+    G.t === 'chain' ? G.maxChain >= G.goal
+    : G.t === 'rocks' ? rocksLeft() === 0
+    : G.t === 'pairs' ? G.placed >= G.goal
+    : G.score >= G.goal;
+  const progress = () =>
+    G.t === 'chain' ? G.maxChain / G.goal
+    : G.t === 'rocks' ? (G.rockStart ? 1 - rocksLeft() / G.rockStart : 0)
+    : G.t === 'pairs' ? G.placed / G.goal
+    : G.score / G.goal;
+  const goalText = () =>
+    G.t === 'chain' ? `CHAIN x${G.goal}`
+    : G.t === 'rocks' ? `ROCKS ${rocksLeft()}`
+    : G.t === 'pairs' ? `SURVIVE ${Math.min(G.placed, G.goal)}/${G.goal}`
+    : `GOAL ${G.goal}`;
 
   const buzz = (n) => {
     try {
@@ -372,20 +433,32 @@ export default function App() {
   };
 
   const start = (L) => {
-    const cfg = levelCfg(L);
+    const cfg = LEVELS[L - 1];
     G.level = L;
-    G.goal = cfg.goal;
-    G.colors = cfg.colors;
-    G.base = cfg.speed;
-    G.moves = cfg.moves;
+    G.t = cfg.t;
+    G.goal = cfg.g || 0;
+    G.colors = cfg.c;
+    G.base = cfg.s;
+    G.moves = cfg.m || 0;
+    G.rain = cfg.rain || 0;
+    G.coach = cfg.coach || '';
+    G.seq = (cfg.seq || []).map((x) => x.slice());
     G.next = np();
     G.board = emptyBoard();
+    const pre = cfg.pre || [];
+    pre.forEach((row, i) => {
+      for (let c = 0; c < COLS; c++) {
+        const ch = row[c];
+        G.board[ROWS - pre.length + i][c] = ch && ch !== '.' ? Number(ch) : 0;
+      }
+    });
     for (let i = 0; i < cfg.rocks; i++) {
       const r = ROWS - 1 - Math.floor(Math.random() * 4);
       const c = Math.floor(Math.random() * COLS);
       G.board[r][c] = ROCK;
     }
     gravity(G.board);
+    G.rockStart = G.board.flat().filter((v) => v === ROCK || v === CRACK).length;
     G.score = 0;
     G.chain = 0;
     G.maxChain = 0;
@@ -418,7 +491,7 @@ export default function App() {
     jingle([0, 2, 4, 6, 9]);
     sfx('choir');
     G.earned =
-      1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= Math.ceil(G.goal / 30) + 2 ? 1 : 0);
+      1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= 10 + G.level * 2 ? 1 : 0);
     if (G.earned > (G.stars[G.level] || 0)) {
       G.stars[G.level] = G.earned;
       AsyncStorage.setItem('stars', JSON.stringify(G.stars)).catch(() => {});
@@ -483,7 +556,7 @@ export default function App() {
       await sleep(G.chain >= 3 ? 420 : 260);
       if (big.length >= 6) await sleep(60);
       G.score += flat.length * 10 * Math.pow(2, G.chain - 1);
-      for (const [r, c] of cells) G.board[r][c] = 0;
+      for (const [r, c] of cells) G.board[r][c] = G.board[r][c] === CRACK ? ROCK : 0;
       G.popping = new Set();
       G.rings = [];
       if (big.length >= 6) {
@@ -512,13 +585,22 @@ export default function App() {
       render();
     }, 800);
 
-    if (G.score >= G.goal) {
+    if (goalMet()) {
       win();
       return;
     }
     if (G.moves && G.placed >= G.moves) {
       gameOver();
       return;
+    }
+    if (G.rain && G.placed % G.rain === 0) {
+      const rc = Math.floor(Math.random() * COLS);
+      if (!G.board[0][rc]) {
+        G.board[0][rc] = ROCK;
+        gravity(G.board);
+        render();
+        await sleep(150);
+      }
     }
     const p = spawn(G.next);
     if (!valid(G.board, p)) {
@@ -666,7 +748,7 @@ export default function App() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 360) / ROWS))
+    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 380) / ROWS))
   );
 
   G.cell = cell;
@@ -678,6 +760,7 @@ export default function App() {
     }
   }
 
+  const T = REALMS[realmOf(G.status === 'menu' ? G.unlocked : G.level)];
   let ghost = [];
   if (G.piece) {
     let gp = G.piece;
@@ -686,14 +769,14 @@ export default function App() {
   }
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: T.bg }]}>
       <StatusBar barStyle="light-content" />
 
       <View style={styles.hud}>
         <View>
           <Text style={styles.label}>SCORE</Text>
           <Text style={styles.score}>{G.score}</Text>
-          <Text style={styles.small}>GOAL {G.goal}</Text>
+          <Text style={styles.small}>{goalText()}</Text>
           {G.moves ? (
             <Text style={[styles.small, { color: '#ffd23b' }]}>
               {Math.max(0, G.moves - G.placed)} MOVES
@@ -732,11 +815,15 @@ export default function App() {
       </View>
 
       <View style={styles.bar}>
-        <View style={[styles.barFill, { width: `${Math.min(100, (G.score / G.goal) * 100)}%` }]} />
+        <View style={[styles.barFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
       </View>
 
+      <Text style={[styles.coach, { color: T.accent }]}>
+        {G.status === 'menu' ? T.name : G.coach || T.name}
+      </Text>
+
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }] }}>
-        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8 }]}>
+        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: T.border }]}>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
               {row.map((col, c) => (
@@ -837,7 +924,7 @@ export default function App() {
                       <Orb color={k} size={34} />
                     </Animated.View>
                   ))}
-                  <Text style={styles.title}>CHAINORB</Text>
+                  <Text style={[styles.title, { textShadowColor: T.accent }]}>CHAINORB</Text>
                   <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
                   <View style={styles.grid}>
                     {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((L) => {
@@ -847,7 +934,7 @@ export default function App() {
                           key={L}
                           disabled={!open}
                           onPress={() => start(L)}
-                          style={[styles.lvl, !open && styles.lvlLocked]}
+                          style={[styles.lvl, open && { borderColor: REALMS[realmOf(L)].accent }, !open && styles.lvlLocked]}
                         >
                           <Text style={styles.lvlTxt}>{open ? L : '🔒'}</Text>
                           {open ? (
@@ -877,7 +964,7 @@ export default function App() {
                   <Text style={styles.overScore}>
                     {G.status === 'won'
                       ? `${G.score} pts`
-                      : `${Math.min(99, Math.round((G.score / G.goal) * 100))}% there`}
+                      : `${Math.min(99, Math.round(progress() * 100))}% there`}
                     {'  •  '}best chain x{G.maxChain}
                   </Text>
                   <Pressable
@@ -969,6 +1056,7 @@ const styles = StyleSheet.create({
     textShadowColor: '#ff3b6b',
     textShadowRadius: 14,
   },
+  coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '92%', marginTop: 14 },
