@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated,
-  useWindowDimensions, StatusBar,
+  useWindowDimensions, StatusBar, PanResponder,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -11,14 +11,18 @@ const COLS = 6;
 const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a'];
+const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b'];
 const ROCK = 6;
+const BOMB = 7;
 // child offset by orientation: 0 up, 1 right, 2 down, 3 left
 const OFF = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rnd = (n) => 1 + Math.floor(Math.random() * n);
-const newPair = (n = 3) => ({ a: rnd(n), b: rnd(n) });
+const newPair = (n = 3, help = 0) => {
+  const a = rnd(n);
+  return { a, b: Math.random() < help ? a : rnd(n) };
+};
 const levelCfg = (L) => ({
   goal: 300 + (L - 1) * 150,
   colors: Math.min(5, 3 + Math.floor((L - 1) / 4)),
@@ -75,7 +79,7 @@ function findGroups(b) {
   const groups = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (!b[r][c] || b[r][c] === ROCK || seen[r][c]) continue;
+      if (!b[r][c] || b[r][c] >= ROCK || seen[r][c]) continue;
       const col = b[r][c];
       const stack = [[r, c]];
       const g = [];
@@ -102,7 +106,7 @@ function findGroups(b) {
 }
 
 /* ============================== UI PARTS ============================== */
-function Orb({ color, size, popping }) {
+function Orb({ color, size, popping, worry }) {
   if (!color) return <View style={{ width: size, height: size }} />;
   return (
     <View style={{ width: size, height: size, padding: size * 0.06 }}>
@@ -110,7 +114,9 @@ function Orb({ color, size, popping }) {
         style={{
           flex: 1,
           borderRadius: size,
-          backgroundColor: popping ? '#ffffff' : COLORS[color],
+          backgroundColor: popping ? '#ffffff' : color === BOMB ? '#2a1408' : COLORS[color],
+          borderWidth: color === BOMB ? 3 : 0,
+          borderColor: '#ff8a3b',
           shadowColor: COLORS[color],
           shadowOpacity: 1,
           shadowRadius: 8,
@@ -128,6 +134,22 @@ function Orb({ color, size, popping }) {
             backgroundColor: 'rgba(255,255,255,0.55)',
           }}
         />
+        {color >= 1 && color <= 5 && (
+          <View style={{ position: 'absolute', top: size * 0.4, flexDirection: 'row' }}>
+            {[0, 1].map((i) => (
+              <View
+                key={i}
+                style={{
+                  width: size * (worry ? 0.2 : 0.13),
+                  height: size * (popping ? 0.04 : worry ? 0.2 : 0.13),
+                  marginHorizontal: size * 0.06,
+                  borderRadius: size,
+                  backgroundColor: '#14142a',
+                }}
+              />
+            ))}
+          </View>
+        )}
       </View>
     </View>
   );
@@ -185,6 +207,10 @@ export default function App() {
     stars: {},
     rings: [],
     earned: 1,
+    fails: {},
+    lockAt: 0,
+    gx: 0,
+    cell: 40,
   }).current;
 
   const [, setT] = useState(0);
@@ -193,11 +219,16 @@ export default function App() {
   const shake = useRef(new Animated.Value(0)).current;
   const burst = useRef(new Animated.Value(0)).current;
   const float = useRef(new Animated.Value(0)).current;
+  const np = () => newPair(G.colors, (G.fails[G.level] || 0) >= 2 ? 0.4 : 0);
 
   const buzz = (n) => {
     try {
       const style =
-        n >= 4 ? Haptics.ImpactFeedbackStyle.Heavy : Haptics.ImpactFeedbackStyle.Medium;
+        n >= 4
+          ? Haptics.ImpactFeedbackStyle.Heavy
+          : n >= 1
+          ? Haptics.ImpactFeedbackStyle.Medium
+          : Haptics.ImpactFeedbackStyle.Light;
       Haptics.impactAsync(style).catch(() => {});
     } catch (e) {}
   };
@@ -218,7 +249,7 @@ export default function App() {
     G.colors = cfg.colors;
     G.base = cfg.speed;
     G.moves = cfg.moves;
-    G.next = newPair(cfg.colors);
+    G.next = np();
     G.board = emptyBoard();
     for (let i = 0; i < cfg.rocks; i++) {
       const r = ROWS - 1 - Math.floor(Math.random() * 4);
@@ -233,12 +264,13 @@ export default function App() {
     G.popping = new Set();
     G.placed = 0;
     G.piece = spawn(G.next);
-    G.next = newPair(G.colors);
+    G.next = np();
     G.status = 'playing';
     render();
   };
 
   const gameOver = () => {
+    G.fails[G.level] = (G.fails[G.level] || 0) + 1;
     G.status = 'over';
     G.piece = null;
     if (G.score > G.best) {
@@ -251,6 +283,7 @@ export default function App() {
 
   const win = () => {
     G.status = 'won';
+    G.fails[G.level] = 0;
     G.earned =
       1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= Math.ceil(G.goal / 30) + 2 ? 1 : 0);
     if (G.earned > (G.stars[G.level] || 0)) {
@@ -271,6 +304,7 @@ export default function App() {
   const resolve = async () => {
     G.status = 'resolving';
     G.chain = 0;
+    const wasDanger = G.board.slice(0, 4).some((row) => row.some(Boolean));
     render();
     while (alive.current) {
       if (gravity(G.board)) {
@@ -281,13 +315,24 @@ export default function App() {
       if (!groups.length) break;
       G.chain++;
       const flat = groups.flat();
+      const big = groups.reduce((m, g) => (g.length > m.length ? g : m), []);
       const hit = new Set(flat.map(([r, c]) => r * COLS + c));
       for (const [r, c] of flat) {
         for (const [dy, dx] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const y = r + dy;
           const x = c + dx;
-          if (y >= 0 && y < ROWS && x >= 0 && x < COLS && G.board[y][x] === ROCK) {
+          if (y >= 0 && y < ROWS && x >= 0 && x < COLS && G.board[y][x] >= ROCK) {
             hit.add(y * COLS + x);
+          }
+        }
+      }
+      for (const k of [...hit]) {
+        const br = Math.floor(k / COLS);
+        const bc = k % COLS;
+        if (G.board[br][bc] !== BOMB) continue;
+        for (let y = br - 1; y <= br + 1; y++) {
+          for (let x = bc - 1; x <= bc + 1; x++) {
+            if (y >= 0 && y < ROWS && x >= 0 && x < COLS && G.board[y][x]) hit.add(y * COLS + x);
           }
         }
       }
@@ -299,16 +344,31 @@ export default function App() {
       if (G.chain >= 2) G.banner = `x${G.chain} CHAIN`;
       render();
       buzz(G.chain);
+      if (G.chain >= 2) setTimeout(() => buzz(G.chain), 90);
       if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
-      await sleep(260);
+      await sleep(G.chain >= 3 ? 420 : 260);
+      if (big.length >= 6) await sleep(60);
       G.score += flat.length * 10 * Math.pow(2, G.chain - 1);
       for (const [r, c] of cells) G.board[r][c] = 0;
       G.popping = new Set();
       G.rings = [];
+      if (big.length >= 6) {
+        const [br, bc] = big.reduce((m, x) => (x[0] > m[0] ? x : m));
+        G.board[br][bc] = BOMB;
+      }
       render();
       await sleep(110);
     }
     if (!alive.current) return;
+    if (G.board.every((row) => row.every((v) => !v))) {
+      G.score += 500;
+      G.banner = 'PERFECT!';
+      doShake(16);
+    } else if (wasDanger && !G.board.slice(0, 4).some((row) => row.some(Boolean))) {
+      G.score += 200;
+      G.banner = 'CLUTCH!';
+      doShake(10);
+    }
     G.maxChain = Math.max(G.maxChain, G.chain);
     setTimeout(() => {
       G.banner = '';
@@ -329,32 +389,36 @@ export default function App() {
       return;
     }
     G.piece = p;
-    G.next = newPair(G.colors);
+    G.next = np();
     G.status = 'playing';
     render();
   };
 
   const lock = () => {
+    G.lockAt = 0;
+    buzz(0);
     for (const [r, c, col] of cellsOf(G.piece)) G.board[r][c] = col;
     G.piece = null;
     G.placed++;
     resolve();
   };
 
-  const step = () => {
+  const step = (force) => {
     if (G.status !== 'playing' || !G.piece) return false;
     const p2 = { ...G.piece, r: G.piece.r + 1 };
     if (valid(G.board, p2)) {
       G.piece = p2;
+      G.lockAt = 0;
       render();
       return true;
     }
-    lock();
+    if (force || (G.lockAt && Date.now() - G.lockAt >= 350)) lock();
+    else if (!G.lockAt) G.lockAt = Date.now();
     return false;
   };
 
   const softDrop = () => {
-    if (step()) G.score += 1;
+    if (step(true)) G.score += 1;
   };
 
   const move = (dx) => {
@@ -387,6 +451,26 @@ export default function App() {
     G.score += n * 2;
     lock();
   };
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        G.gx = 0;
+      },
+      onPanResponderMove: (_, g) => {
+        const dx = g.dx - G.gx;
+        if (Math.abs(dx) >= G.cell) {
+          move(dx > 0 ? 1 : -1);
+          G.gx += dx > 0 ? G.cell : -G.cell;
+        }
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 70 && g.vy > 0.5 && Math.abs(g.dx) < 50) hardDrop();
+        else if (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12) rotate(1);
+      },
+    })
+  ).current;
 
   const speed = () => Math.max(110, G.base - Math.floor(G.placed / 8) * 30);
 
@@ -440,11 +524,20 @@ export default function App() {
     Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 360) / ROWS))
   );
 
+  G.cell = cell;
+  const danger = G.board.slice(0, 4).some((row) => row.some(Boolean));
   const display = G.board.map((row) => row.slice());
   if (G.piece) {
     for (const [r, c, col] of cellsOf(G.piece)) {
       if (r >= 0 && r < ROWS && c >= 0 && c < COLS) display[r][c] = col;
     }
+  }
+
+  let ghost = [];
+  if (G.piece) {
+    let gp = G.piece;
+    while (valid(G.board, { ...gp, r: gp.r + 1 })) gp = { ...gp, r: gp.r + 1 };
+    if (gp.r !== G.piece.r) ghost = cellsOf(gp);
   }
 
   return (
@@ -470,6 +563,16 @@ export default function App() {
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={styles.label}>LEVEL</Text>
           <Text style={styles.score}>{G.level}</Text>
+          <Pressable
+            onPress={() => {
+              if (G.status === 'playing') {
+                G.status = 'menu';
+                render();
+              }
+            }}
+          >
+            <Text style={styles.small}>☰ MENU</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -477,7 +580,7 @@ export default function App() {
         <View style={[styles.barFill, { width: `${Math.min(100, (G.score / G.goal) * 100)}%` }]} />
       </View>
 
-      <Animated.View style={{ transform: [{ translateX: shake }] }}>
+      <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8 }]}>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
@@ -487,10 +590,44 @@ export default function App() {
                   color={col}
                   size={cell}
                   popping={G.popping.has(r * COLS + c)}
+                  worry={danger}
                 />
               ))}
             </View>
           ))}
+
+          {ghost.map(([r, c, col]) => (
+            <View
+              key={`g${r}-${c}`}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: 2 + c * cell + cell * 0.12,
+                top: 2 + r * cell + cell * 0.12,
+                width: cell * 0.76,
+                height: cell * 0.76,
+                borderRadius: cell,
+                borderWidth: 2,
+                borderColor: COLORS[col],
+                opacity: 0.4,
+              }}
+            />
+          ))}
+
+          {danger && G.status === 'playing' && (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  borderRadius: 10,
+                  borderWidth: 3,
+                  borderColor: '#ff3b6b',
+                  opacity: float.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.8] }),
+                },
+              ]}
+            />
+          )}
 
           {G.rings.map((o) => (
             <Animated.View
@@ -583,7 +720,10 @@ export default function App() {
                     </Text>
                   )}
                   <Text style={styles.overScore}>
-                    {G.score} / {G.goal} pts  •  best chain x{G.maxChain}
+                    {G.status === 'won'
+                      ? `${G.score} pts`
+                      : `${Math.min(99, Math.round((G.score / G.goal) * 100))}% there`}
+                    {'  •  '}best chain x{G.maxChain}
                   </Text>
                   <Pressable
                     style={styles.play}
