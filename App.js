@@ -9,15 +9,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 /* ============================== ENGINE ============================== */
 const COLS = 6;
 const ROWS = 12;
-const NCOLORS = 4;
+const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b'];
+const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff'];
 // child offset by orientation: 0 up, 1 right, 2 down, 3 left
 const OFF = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rnd = () => 1 + Math.floor(Math.random() * NCOLORS);
-const newPair = () => ({ a: rnd(), b: rnd() });
+const rnd = (n) => 1 + Math.floor(Math.random() * n);
+const newPair = (n = 3) => ({ a: rnd(n), b: rnd(n) });
+const levelCfg = (L) => ({
+  goal: 300 + (L - 1) * 200,
+  colors: Math.min(5, 3 + Math.floor((L - 1) / 4)),
+  speed: Math.max(300, 700 - (L - 1) * 25),
+});
 const emptyBoard = () => Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 const spawn = (pair) => ({ r: 1, c: 2, o: 0, a: pair.a, b: pair.b });
 
@@ -168,6 +173,11 @@ export default function App() {
     banner: '',
     popping: new Set(),
     placed: 0,
+    level: 1,
+    goal: 300,
+    colors: 3,
+    base: 700,
+    unlocked: 1,
   }).current;
 
   const [, setT] = useState(0);
@@ -192,7 +202,13 @@ export default function App() {
     ]).start();
   };
 
-  const start = () => {
+  const start = (L) => {
+    const cfg = levelCfg(L);
+    G.level = L;
+    G.goal = cfg.goal;
+    G.colors = cfg.colors;
+    G.base = cfg.speed;
+    G.next = newPair(cfg.colors);
     G.board = emptyBoard();
     G.score = 0;
     G.chain = 0;
@@ -201,7 +217,7 @@ export default function App() {
     G.popping = new Set();
     G.placed = 0;
     G.piece = spawn(G.next);
-    G.next = newPair();
+    G.next = newPair(G.colors);
     G.status = 'playing';
     render();
   };
@@ -212,6 +228,18 @@ export default function App() {
     if (G.score > G.best) {
       G.best = G.score;
       AsyncStorage.setItem('best', String(G.best)).catch(() => {});
+    }
+    buzz(4);
+    render();
+  };
+
+  const win = () => {
+    G.status = 'won';
+    G.piece = null;
+    G.banner = '';
+    if (G.level < MAX_LEVEL && G.level + 1 > G.unlocked) {
+      G.unlocked = G.level + 1;
+      AsyncStorage.setItem('unlocked', String(G.unlocked)).catch(() => {});
     }
     buzz(4);
     render();
@@ -250,13 +278,17 @@ export default function App() {
       render();
     }, 800);
 
+    if (G.score >= G.goal) {
+      win();
+      return;
+    }
     const p = spawn(G.next);
     if (!valid(G.board, p)) {
       gameOver();
       return;
     }
     G.piece = p;
-    G.next = newPair();
+    G.next = newPair(G.colors);
     G.status = 'playing';
     render();
   };
@@ -315,7 +347,7 @@ export default function App() {
     lock();
   };
 
-  const speed = () => Math.max(110, 700 - Math.floor(G.placed / 8) * 45);
+  const speed = () => Math.max(110, G.base - Math.floor(G.placed / 8) * 30);
 
   useEffect(() => {
     alive.current = true;
@@ -323,6 +355,14 @@ export default function App() {
       .then((v) => {
         if (v) {
           G.best = parseInt(v, 10) || 0;
+          render();
+        }
+      })
+      .catch(() => {});
+    AsyncStorage.getItem('unlocked')
+      .then((v) => {
+        if (v) {
+          G.unlocked = Math.min(MAX_LEVEL, parseInt(v, 10) || 1);
           render();
         }
       })
@@ -342,7 +382,7 @@ export default function App() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 330) / ROWS))
+    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 345) / ROWS))
   );
 
   const display = G.board.map((row) => row.slice());
@@ -360,7 +400,7 @@ export default function App() {
         <View>
           <Text style={styles.label}>SCORE</Text>
           <Text style={styles.score}>{G.score}</Text>
-          <Text style={styles.small}>BEST {G.best}</Text>
+          <Text style={styles.small}>GOAL {G.goal}</Text>
         </View>
         <View style={{ alignItems: 'center' }}>
           <Text style={styles.label}>NEXT</Text>
@@ -368,9 +408,13 @@ export default function App() {
           <Orb color={G.next.a} size={26} />
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.label}>BEST CHAIN</Text>
-          <Text style={styles.score}>{G.maxChain}</Text>
+          <Text style={styles.label}>LEVEL</Text>
+          <Text style={styles.score}>{G.level}</Text>
         </View>
+      </View>
+
+      <View style={styles.bar}>
+        <View style={[styles.barFill, { width: `${Math.min(100, (G.score / G.goal) * 100)}%` }]} />
       </View>
 
       <Animated.View style={{ transform: [{ translateX: shake }] }}>
@@ -394,20 +438,49 @@ export default function App() {
             </View>
           ) : null}
 
-          {(G.status === 'menu' || G.status === 'over') && (
+          {G.status !== 'playing' && G.status !== 'resolving' && (
             <View style={styles.overlay}>
-              <Text style={styles.title}>
-                {G.status === 'over' ? 'GAME OVER' : 'CHAINORB'}
-              </Text>
-              {G.status === 'over' && (
-                <Text style={styles.overScore}>
-                  {G.score} pts  •  best chain x{G.maxChain}
-                </Text>
+              {G.status === 'menu' ? (
+                <>
+                  <Text style={styles.title}>CHAINORB</Text>
+                  <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
+                  <View style={styles.grid}>
+                    {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((L) => {
+                      const open = L <= G.unlocked;
+                      return (
+                        <Pressable
+                          key={L}
+                          disabled={!open}
+                          onPress={() => start(L)}
+                          style={[styles.lvl, !open && styles.lvlLocked]}
+                        >
+                          <Text style={styles.lvlTxt}>{open ? L : '🔒'}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.title}>
+                    {G.status === 'won' ? `LEVEL ${G.level} CLEAR` : 'GAME OVER'}
+                  </Text>
+                  <Text style={styles.overScore}>
+                    {G.score} / {G.goal} pts  •  best chain x{G.maxChain}
+                  </Text>
+                  <Pressable
+                    style={styles.play}
+                    onPress={() => start(G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level)}
+                  >
+                    <Text style={styles.playTxt}>
+                      {G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
+                    </Text>
+                  </Pressable>
+                  <Pressable onPress={() => { G.status = 'menu'; render(); }}>
+                    <Text style={styles.hint}>LEVELS</Text>
+                  </Pressable>
+                </>
               )}
-              <Pressable style={styles.play} onPress={start}>
-                <Text style={styles.playTxt}>{G.status === 'over' ? 'RETRY' : 'PLAY'}</Text>
-              </Pressable>
-              <Text style={styles.hint}>Match 4+ to pop. Build chains.</Text>
             </View>
           )}
         </View>
@@ -461,7 +534,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
   },
-  title: { color: '#fff', fontSize: 36, fontWeight: '900', letterSpacing: 4 },
+  title: { color: '#fff', fontSize: 28, fontWeight: '900', letterSpacing: 4 },
   overScore: { color: '#aaa', marginTop: 8, fontSize: 15 },
   play: {
     marginTop: 22,
@@ -484,6 +557,12 @@ const styles = StyleSheet.create({
     textShadowColor: '#ff3b6b',
     textShadowRadius: 14,
   },
+  bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
+  barFill: { height: 6, backgroundColor: '#2bff88' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '92%', marginTop: 14 },
+  lvl: { width: 46, height: 46, margin: 4, borderRadius: 12, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
+  lvlLocked: { borderColor: '#2a2a4a', opacity: 0.5 },
+  lvlTxt: { color: '#fff', fontSize: 18, fontWeight: '800' },
   controls: { width: '94%', marginTop: 10 },
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
