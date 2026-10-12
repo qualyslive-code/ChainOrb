@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { File, Paths } from 'expo-file-system';
 
 /* ============================== ENGINE ============================== */
 const COLS = 6;
@@ -103,6 +105,133 @@ function findGroups(b) {
     }
   }
   return groups;
+}
+
+/* ============================== SOUND ============================== */
+// Every sound is synthesized in code at startup: no audio files.
+// Pentatonic scale, so every chain sounds musical.
+const SR = 22050;
+const NOTES = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.51, 1567.98, 1760];
+const P = {};
+let MUTED = false;
+let soundReady = false;
+
+function tone(f, dur, o = {}) {
+  const { decay = 5.5, attack = 0.004, gain = 0.5, harm = [1, 0.4, 0.15] } = o;
+  const n = Math.floor(SR * dur);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const env = Math.min(1, t / attack) * Math.exp(-decay * t);
+    let v = 0;
+    for (let k = 0; k < harm.length; k++) v += harm[k] * Math.sin(2 * Math.PI * f * (k + 1) * t);
+    out[i] = v * env * gain;
+  }
+  return out;
+}
+function kick() {
+  const n = Math.floor(SR * 0.22);
+  const out = new Float32Array(n);
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    ph += (2 * Math.PI * (50 + 120 * Math.exp(-t * 30))) / SR;
+    out[i] = Math.sin(ph) * Math.exp(-t * 14) * 0.85;
+  }
+  return out;
+}
+function choir() {
+  const a = tone(523.25, 0.9, { decay: 2.2, attack: 0.15, gain: 0.22, harm: [1, 0.3] });
+  const b = tone(659.25, 0.9, { decay: 2.2, attack: 0.15, gain: 0.22, harm: [1, 0.3] });
+  const c = tone(783.99, 0.9, { decay: 2.2, attack: 0.15, gain: 0.22, harm: [1, 0.3] });
+  return a.map((v, i) => v + b[i] + c[i]);
+}
+function wav(x) {
+  const n = x.length;
+  const u = new Uint8Array(44 + n * 2);
+  const dv = new DataView(u.buffer);
+  const str = (o, t) => {
+    for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i));
+  };
+  str(0, 'RIFF');
+  dv.setUint32(4, 36 + n * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true);
+  dv.setUint32(24, SR, true);
+  dv.setUint32(28, SR * 2, true);
+  dv.setUint16(32, 2, true);
+  dv.setUint16(34, 16, true);
+  str(36, 'data');
+  dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) dv.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x[i])) * 32767, true);
+  return u;
+}
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function b64(u) {
+  let o = '';
+  for (let i = 0; i < u.length; i += 3) {
+    const a = u[i];
+    const b = u[i + 1];
+    const c = u[i + 2];
+    o += B64[a >> 2] + B64[((a & 3) << 4) | ((b || 0) >> 4)];
+    o += i + 1 < u.length ? B64[((b & 15) << 2) | ((c || 0) >> 6)] : '=';
+    o += i + 2 < u.length ? B64[c & 63] : '=';
+  }
+  return o;
+}
+async function initSound() {
+  if (soundReady) return;
+  soundReady = true;
+  try {
+    await setAudioModeAsync({ playsInSilentMode: true });
+  } catch (e) {}
+  const defs = {};
+  NOTES.forEach((f, i) => {
+    defs['n' + i] = tone(f, 0.5);
+  });
+  defs.bass = tone(130.81, 0.5, { decay: 5, gain: 0.6, harm: [1, 0.3] });
+  defs.kick = kick();
+  defs.choir = choir();
+  defs.land = tone(220, 0.08, { decay: 40, gain: 0.25, harm: [1] });
+  for (const name of Object.keys(defs)) {
+    try {
+      const bytes = wav(defs[name]);
+      let uri;
+      try {
+        const f = new File(Paths.cache, `co_${name}.wav`);
+        if (f.exists) f.delete();
+        f.create();
+        f.write(bytes);
+        uri = f.uri;
+      } catch (e) {
+        uri = 'data:audio/wav;base64,' + b64(bytes);
+      }
+      P[name] = createAudioPlayer({ uri });
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+function sfx(name) {
+  if (MUTED) return;
+  const pl = P[name];
+  if (!pl) return;
+  try {
+    Promise.resolve(pl.seekTo(0)).catch(() => {});
+    pl.play();
+  } catch (e) {}
+}
+const jingle = (seq, gap = 90) => seq.forEach((k, i) => setTimeout(() => sfx('n' + k), i * gap));
+// a pop = a short run up the scale; higher chain = higher and fuller
+function playChain(chain, count) {
+  const base = Math.min(chain - 1, 4);
+  const n = Math.min(5, Math.max(2, Math.floor(count / 2)));
+  for (let i = 0; i < n; i++) setTimeout(() => sfx('n' + Math.min(9, base + i)), i * 45);
+  if (chain >= 2) sfx('bass');
+  if (chain >= 3) sfx('kick');
+  if (chain >= 5) sfx('choir');
 }
 
 /* ============================== UI PARTS ============================== */
@@ -272,6 +401,8 @@ export default function App() {
   const gameOver = () => {
     G.fails[G.level] = (G.fails[G.level] || 0) + 1;
     G.status = 'over';
+    jingle([3, 2, 1, 0], 140);
+    sfx('bass');
     G.piece = null;
     if (G.score > G.best) {
       G.best = G.score;
@@ -284,6 +415,8 @@ export default function App() {
   const win = () => {
     G.status = 'won';
     G.fails[G.level] = 0;
+    jingle([0, 2, 4, 6, 9]);
+    sfx('choir');
     G.earned =
       1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= Math.ceil(G.goal / 30) + 2 ? 1 : 0);
     if (G.earned > (G.stars[G.level] || 0)) {
@@ -344,6 +477,7 @@ export default function App() {
       if (G.chain >= 2) G.banner = `x${G.chain} CHAIN`;
       render();
       buzz(G.chain);
+      playChain(G.chain, flat.length);
       if (G.chain >= 2) setTimeout(() => buzz(G.chain), 90);
       if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
       await sleep(G.chain >= 3 ? 420 : 260);
@@ -363,10 +497,13 @@ export default function App() {
     if (G.board.every((row) => row.every((v) => !v))) {
       G.score += 500;
       G.banner = 'PERFECT!';
+      jingle([0, 2, 4, 6, 8, 9], 70);
+      sfx('choir');
       doShake(16);
     } else if (wasDanger && !G.board.slice(0, 4).some((row) => row.some(Boolean))) {
       G.score += 200;
       G.banner = 'CLUTCH!';
+      jingle([4, 6, 9], 80);
       doShake(10);
     }
     G.maxChain = Math.max(G.maxChain, G.chain);
@@ -397,6 +534,7 @@ export default function App() {
   const lock = () => {
     G.lockAt = 0;
     buzz(0);
+    sfx('land');
     for (const [r, c, col] of cellsOf(G.piece)) G.board[r][c] = col;
     G.piece = null;
     G.placed++;
@@ -476,6 +614,13 @@ export default function App() {
 
   useEffect(() => {
     alive.current = true;
+    initSound();
+    AsyncStorage.getItem('muted')
+      .then((v) => {
+        MUTED = v === '1';
+        render();
+      })
+      .catch(() => {});
     AsyncStorage.getItem('best')
       .then((v) => {
         if (v) {
@@ -572,6 +717,16 @@ export default function App() {
             }}
           >
             <Text style={styles.small}>☰ MENU</Text>
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            onPress={() => {
+              MUTED = !MUTED;
+              AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
+              render();
+            }}
+          >
+            <Text style={styles.small}>{MUTED ? '🔇 SOUND' : '🔊 SOUND'}</Text>
           </Pressable>
         </View>
       </View>
