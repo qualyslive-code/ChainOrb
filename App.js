@@ -612,8 +612,8 @@ async function loadAllMusic() {
 /* ============================== ONLINE (optional) ============================== */
 // Fully optional: with the two constants below left empty, the game never touches the network.
 // Fill them in once the Supabase tables exist (see supabase_chainorb.sql).
-const SUPABASE_URL = ''; // https://YOUR-PROJECT.supabase.co
-const SUPABASE_ANON = ''; // public anon / publishable key
+const SUPABASE_URL = 'https://ipaophblasfxycicsurn.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_za3YxnBct36Q_n8I-rniLg_o4u4C3tN'; // public client key (safe to ship; access is limited by row-level security)
 const ONLINE = !!(SUPABASE_URL && SUPABASE_ANON);
 let PID = 'p' + Math.random().toString(36).slice(2, 10);
 let NICK = 'Orb' + (1000 + Math.floor(Math.random() * 9000));
