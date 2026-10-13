@@ -769,7 +769,8 @@ function Orb({ color, size, popping, worry }) {
   );
 }
 
-function HoldButton({ label, onPress, repeat, style }) {
+// NEXTGEN_CONTROLS
+function HoldButton({ label, onPress, repeat, style, textStyle, dim }) {
   const t = useRef(null);
   const i = useRef(null);
   const stop = () => {
@@ -788,9 +789,9 @@ function HoldButton({ label, onPress, repeat, style }) {
         }
       }}
       onPressOut={stop}
-      style={({ pressed }) => [styles.btn, style, pressed && styles.btnDown]}
+      style={({ pressed }) => [styles.btn, style, dim && styles.btnDim, pressed && !dim && styles.btnDown]}
     >
-      <Text style={styles.btnTxt}>{label}</Text>
+      <Text style={[styles.btnTxt, textStyle]}>{label}</Text>
     </Pressable>
   );
 }
@@ -2127,14 +2128,14 @@ function Game() {
 
       <View style={styles.controls}>
         <View style={styles.row}>
-          <HoldButton label="⟲" onPress={() => rotate(-1)} />
-          <HoldButton label="⟳" onPress={() => rotate(1)} />
-          <HoldButton label="DROP" onPress={hardDrop} style={styles.dropBtn} />
+          <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} />
+          <HoldButton dim={G.status !== 'playing'} label="⟳" onPress={() => rotate(1)} />
+          <HoldButton dim={G.status !== 'playing'} label="DROP" onPress={hardDrop} style={styles.dropBtn} textStyle={styles.dropTxt} />
         </View>
         <View style={styles.row}>
-          <HoldButton label="◀" onPress={() => move(-1)} repeat />
-          <HoldButton label="▼" onPress={softDrop} repeat />
-          <HoldButton label="▶" onPress={() => move(1)} repeat />
+          <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat />
+          <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat />
+          <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat />
         </View>
       </View>
       {G.ad && (
@@ -2225,18 +2226,22 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
     flex: 1,
-    height: 58,
-    marginHorizontal: 4,
-    backgroundColor: '#1a1a30',
-    borderRadius: 14,
+    height: 64,
+    marginHorizontal: 5,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#2a2a4a',
+    borderColor: 'rgba(255,255,255,0.16)',
+    borderTopColor: 'rgba(255,255,255,0.32)',
     alignItems: 'center',
     justifyContent: 'center',
+    elevation: 4,
   },
-  btnDown: { backgroundColor: '#2c2c55' },
-  btnTxt: { color: '#fff', fontSize: 22, fontWeight: '700' },
-  dropBtn: { backgroundColor: '#3a1a30', borderColor: '#ff3b6b' },
+  btnDown: { backgroundColor: 'rgba(255,255,255,0.20)', transform: [{ scale: 0.94 }] },
+  btnDim: { opacity: 0.32 },
+  btnTxt: { color: '#fff', fontSize: 26, fontWeight: '700' },
+  dropBtn: { backgroundColor: 'rgba(255,59,107,0.20)', borderColor: '#ff3b6b', borderTopColor: '#ff7a9a' },
+  dropTxt: { fontSize: 20, fontWeight: '900', letterSpacing: 2 },
 });
 
 
