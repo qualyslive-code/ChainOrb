@@ -146,6 +146,21 @@ const LEVELS = [
   { t: 'score', g: 2600, c: 5, s: 520, m: 40, rocks: 8, coach: 'FINAL BOSS: Kampala Neon' },
 ];
 
+/* ============================== ORBLINGS ============================== */
+// Stars hatch creatures. Each gives one power per level.
+const ORBLINGS = [
+  { id: 'crane', name: 'Crowned Crane', icon: '🦢', need: 3, power: 'Slows time' },
+  { id: 'kob', name: 'Uganda Kob', icon: '🦌', need: 8, power: 'Undoes your last move' },
+  { id: 'gorilla', name: 'Mountain Gorilla', icon: '🦍', need: 15, power: 'Smashes a column of rocks' },
+  { id: 'shoebill', name: 'Shoebill', icon: '🦆', need: 24, power: 'Swallows your most common color' },
+];
+const totalStars = (st) => Object.values(st).reduce((a, b) => a + b, 0);
+const orblingLine = (st) => {
+  const t = totalStars(st);
+  const n = ORBLINGS.find((o) => t < o.need);
+  return n ? `★ ${t}  •  next Orbling at ${n.need}★` : `★ ${t}  •  all Orblings found`;
+};
+
 /* ============================== SOUND ============================== */
 // Every sound is synthesized in code at startup: no audio files.
 // Pentatonic scale, so every chain sounds musical.
@@ -376,6 +391,11 @@ export default function App() {
     rings: [],
     earned: 1,
     fails: {},
+    used: {},
+    snap: null,
+    slowUntil: 0,
+    hatched: null,
+    boss: false,
     lockAt: 0,
     gx: 0,
     cell: 40,
@@ -442,6 +462,11 @@ export default function App() {
     G.moves = cfg.m || 0;
     G.rain = cfg.rain || 0;
     G.coach = cfg.coach || '';
+    G.used = {};
+    G.snap = null;
+    G.slowUntil = 0;
+    G.hatched = null;
+    G.boss = false;
     G.seq = (cfg.seq || []).map((x) => x.slice());
     G.next = np();
     G.board = emptyBoard();
@@ -492,10 +517,19 @@ export default function App() {
     sfx('choir');
     G.earned =
       1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= 10 + G.level * 2 ? 1 : 0);
+    const before = totalStars(G.stars);
     if (G.earned > (G.stars[G.level] || 0)) {
       G.stars[G.level] = G.earned;
       AsyncStorage.setItem('stars', JSON.stringify(G.stars)).catch(() => {});
     }
+    const after = totalStars(G.stars);
+    G.hatched = ORBLINGS.find((o) => before < o.need && after >= o.need) || null;
+    G.boss = G.level % 10 === 0;
+    if (G.boss) {
+      doShake(14);
+      jingle([0, 2, 4, 6, 8, 9, 8, 9], 80);
+    }
+    if (G.hatched) setTimeout(() => jingle([4, 6, 7, 9], 110), 700);
     G.piece = null;
     G.banner = '';
     if (G.level < MAX_LEVEL && G.level + 1 > G.unlocked) {
@@ -617,6 +651,13 @@ export default function App() {
     G.lockAt = 0;
     buzz(0);
     sfx('land');
+    G.snap = {
+      board: G.board.map((row) => row.slice()),
+      score: G.score,
+      placed: G.placed,
+      a: G.piece.a,
+      b: G.piece.b,
+    };
     for (const [r, c, col] of cellsOf(G.piece)) G.board[r][c] = col;
     G.piece = null;
     G.placed++;
@@ -692,7 +733,53 @@ export default function App() {
     })
   ).current;
 
-  const speed = () => Math.max(110, G.base - Math.floor(G.placed / 8) * 30);
+  const usePower = (id) => {
+    if (G.status !== 'playing' || !G.piece || G.used[id]) return;
+    const isRock = (v) => v === ROCK || v === CRACK;
+    if (id === 'crane') {
+      G.slowUntil = Date.now() + 6000;
+    } else if (id === 'kob') {
+      if (!G.snap) return;
+      G.board = G.snap.board.map((row) => row.slice());
+      G.score = G.snap.score;
+      G.placed = G.snap.placed;
+      G.next = { a: G.piece.a, b: G.piece.b };
+      G.piece = spawn({ a: G.snap.a, b: G.snap.b });
+      G.snap = null;
+    } else if (id === 'gorilla') {
+      let best = 0;
+      let bc = -1;
+      for (let c = 0; c < COLS; c++) {
+        let n = 0;
+        for (let r = 0; r < ROWS; r++) if (isRock(G.board[r][c])) n++;
+        if (n > best) {
+          best = n;
+          bc = c;
+        }
+      }
+      if (bc < 0) return;
+      for (let r = 0; r < ROWS; r++) if (isRock(G.board[r][bc])) G.board[r][bc] = 0;
+      gravity(G.board);
+    } else if (id === 'shoebill') {
+      const cnt = {};
+      G.board.forEach((row) =>
+        row.forEach((v) => {
+          if (v >= 1 && v <= 5) cnt[v] = (cnt[v] || 0) + 1;
+        })
+      );
+      const top = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+      if (!top) return;
+      G.board = G.board.map((row) => row.map((v) => (v === Number(top) ? 0 : v)));
+      gravity(G.board);
+    }
+    G.used[id] = true;
+    buzz(3);
+    jingle([4, 6, 9], 70);
+    render();
+  };
+
+  const speed = () =>
+    Math.max(110, G.base - Math.floor(G.placed / 8) * 30) * (Date.now() < G.slowUntil ? 2.5 : 1);
 
   useEffect(() => {
     alive.current = true;
@@ -748,7 +835,7 @@ export default function App() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 24) / COLS), Math.floor((height - 380) / ROWS))
+    Math.min(Math.floor((width - 120) / COLS), Math.floor((height - 380) / ROWS))
   );
 
   G.cell = cell;
@@ -822,6 +909,26 @@ export default function App() {
         {G.status === 'menu' ? T.name : G.coach || T.name}
       </Text>
 
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+        <View style={{ width: 46, alignItems: 'center', paddingTop: 6 }}>
+          {ORBLINGS.map((o) => {
+            const owned = totalStars(G.stars) >= o.need;
+            const spent = G.used[o.id];
+            return (
+              <Pressable
+                key={o.id}
+                disabled={!owned || !!spent || G.status !== 'playing'}
+                onPress={() => usePower(o.id)}
+                style={[
+                  styles.chip,
+                  { borderColor: owned ? T.accent : '#2a2a4a', opacity: owned && !spent ? 1 : 0.35 },
+                ]}
+              >
+                <Text style={{ fontSize: 20 }}>{owned ? o.icon : '🥚'}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: T.border }]}>
           {display.map((row, r) => (
@@ -926,6 +1033,18 @@ export default function App() {
                   ))}
                   <Text style={[styles.title, { textShadowColor: T.accent }]}>CHAINORB</Text>
                   <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
+                  <Animated.View
+                    style={{
+                      transform: [
+                        { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) },
+                      ],
+                    }}
+                  >
+                    <Text style={{ fontSize: 28, letterSpacing: 6, textAlign: 'center' }}>
+                      {ORBLINGS.map((o) => (totalStars(G.stars) >= o.need ? o.icon : '🥚')).join(' ')}
+                    </Text>
+                  </Animated.View>
+                  <Text style={styles.hint}>{orblingLine(G.stars)}</Text>
                   <View style={styles.grid}>
                     {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((L) => {
                       const open = L <= G.unlocked;
@@ -961,6 +1080,16 @@ export default function App() {
                       {'★'.repeat(G.earned) + '☆'.repeat(3 - G.earned)}
                     </Text>
                   )}
+                  {G.status === 'won' && G.boss && (
+                    <Text style={[styles.hatch, { color: '#ffd23b' }]}>BOSS DEFEATED!</Text>
+                  )}
+                  {G.status === 'won' && G.hatched && (
+                    <Text style={styles.hatch}>
+                      {G.hatched.icon} NEW ORBLING{'\n'}
+                      {G.hatched.name}{'\n'}
+                      {G.hatched.power}
+                    </Text>
+                  )}
                   <Text style={styles.overScore}>
                     {G.status === 'won'
                       ? `${G.score} pts`
@@ -984,6 +1113,8 @@ export default function App() {
           )}
         </View>
       </Animated.View>
+        <View style={{ width: 46 }} />
+      </View>
 
       <View style={styles.controls}>
         <View style={styles.row}>
@@ -1056,6 +1187,8 @@ const styles = StyleSheet.create({
     textShadowColor: '#ff3b6b',
     textShadowRadius: 14,
   },
+  chip: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: '#14142a' },
+  hatch: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 8, letterSpacing: 1 },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
