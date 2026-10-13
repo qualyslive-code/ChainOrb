@@ -1694,6 +1694,28 @@ function Game() {
           <Pressable hitSlop={10} onPress={pause}>
             <Text style={styles.small}>⏸ PAUSE</Text>
           </Pressable>
+          {/* RESTART_BTN */}
+          {(G.status === 'playing' || G.status === 'paused') && (
+            <Pressable
+              hitSlop={10}
+              onPress={() => {
+                if (G.status !== 'playing' && G.status !== 'paused') return;
+                if (Date.now() - (G.restartArm || 0) < 2500) {
+                  G.restartArm = 0;
+                  logEvent('quit');
+                  start(G.level);
+                } else {
+                  G.restartArm = Date.now();
+                  render();
+                  setTimeout(() => render(), 2600);
+                }
+              }}
+            >
+              <Text style={styles.small}>
+                {Date.now() - (G.restartArm || 0) < 2500 ? '↻ TAP AGAIN' : '↻ RESTART'}
+              </Text>
+            </Pressable>
+          )}
           <Pressable
             hitSlop={10}
             onPress={() => {
