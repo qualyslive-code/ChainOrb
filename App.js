@@ -328,6 +328,7 @@ async function initSound() {
     } catch (e) {}
     await new Promise((r) => setTimeout(r, 0));
   }
+  loadAllMusic();
 }
 function sfx(name) {
   if (MUTED) return;
@@ -347,6 +348,140 @@ function playChain(chain, count) {
   if (chain >= 2) sfx('bass');
   if (chain >= 3) sfx('kick');
   if (chain >= 5) sfx('choir');
+}
+
+/* ============================== MUSIC ============================== */
+// One looping background track per realm, synthesized in code (no audio files).
+// Generated in small chunks so the game never stutters; current realm loads first.
+const hz = (s) => 440 * Math.pow(2, s / 12); // semitones from A4
+const TRACKS = [
+  // 0 SUNRISE MEADOW: warm, bright, gentle arpeggio
+  {
+    bpm: 88, bassEvery: 4, kick: false, arpGain: 0.2, padGain: 0.16,
+    chords: [[-9, -5, -2], [-12, -9, -5], [-16, -12, -9], [-14, -10, -7]],
+    pat: [0, 1, 2, 3, 2, 1, 4, 2, 0, 1, 2, 3, 4, 3, 2, 1],
+  },
+  // 1 MOONLIT LAKE: slow, deep, bell-like
+  {
+    bpm: 70, bassEvery: 8, kick: false, arpGain: 0.17, padGain: 0.2,
+    chords: [[-12, -9, -5], [-16, -12, -9], [-9, -5, -2], [-5, -2, 2]],
+    pat: [0, -1, 2, -1, 1, -1, 3, -1, 2, -1, 4, -1, 1, -1, 3, -1],
+  },
+  // 2 FROST PEAKS: airy, sparse, glassy
+  {
+    bpm: 80, bassEvery: 8, kick: false, arpGain: 0.15, padGain: 0.14, arpUp: 2,
+    chords: [[-7, -3, 0], [-12, -8, -5], [-10, -7, -3], [-14, -10, -7]],
+    pat: [0, -1, -1, 2, -1, -1, 4, -1, 1, -1, -1, 3, -1, -1, 4, -1],
+  },
+  // 3 NEON CITY: driving, kick and pulse bass
+  {
+    bpm: 112, bassEvery: 1, kick: true, arpGain: 0.2, padGain: 0.1,
+    chords: [[-17, -14, -10], [-9, -5, -2], [-14, -10, -7], [-7, -3, 0]],
+    pat: [0, 2, 1, 2, 3, 2, 1, 2, 0, 2, 1, 4, 3, 2, 4, 2],
+  },
+];
+
+const musTick = () => new Promise((r) => setTimeout(r, 0));
+
+async function makeTrack(d) {
+  const beat = 60 / d.bpm;
+  const total = Math.floor(SR * beat * 32); // 4 chords x 8 beats
+  const buf = new Float32Array(total);
+  // wraps around the end, so tails fade into the start of the loop
+  const add = (t0, sig, g = 1) => {
+    const s = Math.floor(t0 * SR);
+    for (let i = 0; i < sig.length; i++) buf[(s + i) % total] += sig[i] * g;
+  };
+  for (let ci = 0; ci < d.chords.length; ci++) {
+    const ch = d.chords[ci].map(hz);
+    const t0 = ci * 8 * beat;
+    // pad: soft sustained chord
+    for (const f of ch) {
+      add(t0, tone(f, beat * 8 + 0.8, { decay: 0.55, attack: 0.5, gain: 1, harm: [1, 0.2] }), d.padGain);
+      await musTick();
+    }
+    // bass
+    const bd = d.bassEvery * beat;
+    for (let b = 0; b * bd < beat * 8 - 0.001; b++) {
+      add(t0 + b * bd, tone(ch[0] / 2, Math.min(0.6, bd + 0.1), { decay: 4, attack: 0.01, gain: 1, harm: [1, 0.3] }), 0.3);
+    }
+    await musTick();
+    // kick on every beat
+    if (d.kick) {
+      const k = kick();
+      for (let b = 0; b < 8; b++) add(t0 + b * beat, k, 0.45);
+      await musTick();
+    }
+    // arpeggio on eighth notes (16 per chord, two bars)
+    const notes = [ch[0], ch[1], ch[2], ch[0] * 2, ch[1] * 2];
+    const up = d.arpUp || 1;
+    for (let i = 0; i < 16; i++) {
+      const idx = d.pat[i];
+      if (idx >= 0) {
+        add(t0 + i * (beat / 2), tone(notes[idx] * up, 0.5, { decay: 6, attack: 0.005, gain: 1, harm: [1, 0.3] }), d.arpGain);
+      }
+      if (i % 4 === 3) await musTick();
+    }
+  }
+  let peak = 0;
+  for (let i = 0; i < total; i++) peak = Math.max(peak, Math.abs(buf[i]));
+  const sc = peak > 0 ? 0.85 / peak : 1;
+  for (let i = 0; i < total; i++) buf[i] *= sc;
+  return buf;
+}
+
+const MUS = {};
+const musBusy = {};
+let musWant = -1;
+
+async function loadMusic(r) {
+  if (MUS[r] || musBusy[r]) return;
+  musBusy[r] = true;
+  try {
+    const bytes = wav(await makeTrack(TRACKS[r]));
+    let uri;
+    try {
+      const f = new File(Paths.cache, `co_music${r}.wav`);
+      if (f.exists) f.delete();
+      f.create();
+      f.write(bytes);
+      uri = f.uri;
+    } catch (e) {
+      uri = 'data:audio/wav;base64,' + b64(bytes);
+    }
+    const pl = createAudioPlayer({ uri });
+    pl.loop = true;
+    pl.volume = 0.3;
+    MUS[r] = pl;
+  } catch (e) {}
+  musBusy[r] = false;
+  if (musWant === r) applyMusic();
+}
+
+function applyMusic() {
+  for (const k of Object.keys(MUS)) {
+    const pl = MUS[k];
+    try {
+      if (Number(k) === musWant && !MUTED) pl.play();
+      else pl.pause();
+    } catch (e) {}
+  }
+  if (musWant >= 0 && !MUS[musWant]) loadMusic(musWant);
+}
+
+function setMusic(r) {
+  musWant = r;
+  applyMusic();
+}
+
+// current realm first, then the rest in the background
+async function loadAllMusic() {
+  const first = musWant >= 0 ? musWant : 0;
+  const order = [first, ...[0, 1, 2, 3].filter((x) => x !== first)];
+  for (const r of order) {
+    await loadMusic(r);
+    await new Promise((res) => setTimeout(res, 1500));
+  }
 }
 
 /* ============================== UI PARTS ============================== */
@@ -1118,7 +1253,11 @@ function Game() {
     }
   }
 
-  const T = REALMS[realmOf(G.status === 'menu' ? G.unlocked : G.level)];
+  const realm = realmOf(G.status === 'menu' ? G.unlocked : G.level);
+  useEffect(() => {
+    setMusic(realm);
+  }, [realm, MUTED]);
+  const T = REALMS[realm];
   let ghost = [];
   if (G.piece) {
     let gp = G.piece;
