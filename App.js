@@ -112,10 +112,10 @@ function findGroups(b) {
 
 /* ============================== REALMS & LEVELS ============================== */
 const REALMS = [
-  { name: 'SAVANNA DAWN', bg: '#150c06', board: '#21130a', border: '#7a4420', accent: '#ffb347' },
-  { name: 'LAKE NIGHT', bg: '#05121a', board: '#09202c', border: '#1d6272', accent: '#3be0c8' },
-  { name: 'RWENZORI ICE', bg: '#09121f', board: '#0f1f38', border: '#4a7ab0', accent: '#9fd8ff' },
-  { name: 'KAMPALA NEON', bg: '#0a0a14', board: '#11111f', border: '#4a2a6a', accent: '#ff3bd4' },
+  { name: 'SUNRISE MEADOW', bg: '#150c06', board: '#21130a', border: '#7a4420', accent: '#ffb347' },
+  { name: 'MOONLIT LAKE', bg: '#05121a', board: '#09202c', border: '#1d6272', accent: '#3be0c8' },
+  { name: 'FROST PEAKS', bg: '#09121f', board: '#0f1f38', border: '#4a7ab0', accent: '#9fd8ff' },
+  { name: 'NEON CITY', bg: '#0a0a14', board: '#11111f', border: '#4a2a6a', accent: '#ff3bd4' },
 ];
 const realmOf = (L) => Math.min(3, Math.floor((L - 1) / 5));
 // t: score | chain | rocks | pairs.  g goal, c colors, s speed ms, m move limit,
@@ -145,13 +145,13 @@ const LEVELS = [
   { t: 'rocks', c: 5, s: 650, pre: ['8..8..', '.8..8.'], coach: 'Break every cracked rock' },
   { t: 'score', g: 2000, c: 5, s: 560, coach: 'Marathon. Keep the chains coming' },
   { t: 'pairs', g: 36, c: 5, s: 560, rain: 3, rocks: 4, coach: 'Gauntlet' },
-  { t: 'score', g: 2600, c: 5, s: 520, m: 40, rocks: 8, coach: 'FINAL BOSS: Kampala Neon' },
+  { t: 'score', g: 2600, c: 5, s: 520, m: 40, rocks: 8, coach: 'FINAL BOSS: Neon City' },
   { t: 'endless', g: 99999999, c: 5, s: 600, rain: 6, coach: 'ENDLESS: how long can you chain?' },
   { t: 'daily', g: 40, c: 5, s: 620, rain: 5, coach: 'DAILY CHAIN: same board for everyone' },
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v7';
+const VERSION = 'v8';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -178,10 +178,10 @@ const dateSeed = () => Number(dateKey().replace(/-/g, ''));
 /* ============================== ORBLINGS ============================== */
 // Stars hatch creatures. Each gives one power per level.
 const ORBLINGS = [
-  { id: 'crane', name: 'Crowned Crane', icon: '🦢', need: 3, power: 'Slows time' },
-  { id: 'kob', name: 'Uganda Kob', icon: '🦌', need: 8, power: 'Undoes your last move' },
-  { id: 'gorilla', name: 'Mountain Gorilla', icon: '🦍', need: 15, power: 'Smashes a column of rocks' },
-  { id: 'shoebill', name: 'Shoebill', icon: '🦆', need: 24, power: 'Swallows your most common color' },
+  { id: 'crane', name: 'Wise Owl', icon: '🦉', need: 3, power: 'Slows time' },
+  { id: 'kob', name: 'Quick Fox', icon: '🦊', need: 8, power: 'Undoes your last move' },
+  { id: 'gorilla', name: 'Mighty Bear', icon: '🐻', need: 15, power: 'Smashes a column of rocks' },
+  { id: 'shoebill', name: 'Hungry Octopus', icon: '🐙', need: 24, power: 'Swallows your most common color' },
 ];
 const totalStars = (st) => Object.values(st).reduce((a, b) => a + b, 0);
 const orblingLine = (st) => {
@@ -420,6 +420,11 @@ function Game() {
     rings: [],
     earned: 1,
     fails: {},
+    fever: 0,
+    feverUntil: 0,
+    continued: false,
+    starAd: false,
+    ad: null,
     daily: null,
     lastErr: '',
     prismNext: false,
@@ -506,6 +511,10 @@ function Game() {
     G.hatched = null;
     G.boss = false;
     G.prismNext = false;
+    G.fever = 0;
+    G.feverUntil = 0;
+    G.continued = false;
+    G.starAd = false;
     G.seq = (cfg.seq || []).map((x) => x.slice());
     G.next = np();
     G.board = emptyBoard();
@@ -559,6 +568,50 @@ function Game() {
     Share.share({
       message: `ChainOrb Daily ${d.d}\n${d.s} pts • best chain x${d.c}\nCan you beat me?`,
     }).catch(() => {});
+  };
+
+  const showAd = (cb) => {
+    G.ad = { left: 3 };
+    render();
+    const tick = () => {
+      if (!G.ad) return;
+      G.ad.left--;
+      if (G.ad.left <= 0) {
+        G.ad = null;
+        cb();
+        render();
+      } else {
+        render();
+        setTimeout(tick, 1000);
+      }
+    };
+    setTimeout(tick, 1000);
+  };
+  const continueAfterAd = () =>
+    showAd(() => {
+      if (G.moves && G.placed >= G.moves) G.moves = G.placed + 6;
+      for (let r = 0; r < 4; r++) G.board[r] = Array(COLS).fill(0);
+      G.continued = true;
+      G.status = 'playing';
+      G.piece = spawn(G.next);
+      G.next = np();
+    });
+  const adStar = () =>
+    showAd(() => {
+      const before = totalStars(G.stars);
+      G.earned = Math.min(3, G.earned + 1);
+      G.stars[G.level] = Math.max(G.stars[G.level] || 0, G.earned);
+      AsyncStorage.setItem('stars', JSON.stringify(G.stars)).catch(() => {});
+      const after = totalStars(G.stars);
+      G.hatched = ORBLINGS.find((o) => before < o.need && after >= o.need) || G.hatched;
+      G.starAd = true;
+    });
+  const nextAction = () => {
+    if (G.t === 'daily') return shareDaily();
+    const nxt = G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level;
+    if (G.status === 'won' && G.level >= 5 && G.level % 3 === 0) showAd(() => start(nxt));
+    else start(nxt);
+    return null;
   };
 
   const win = () => {
@@ -650,7 +703,17 @@ function Game() {
       if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
       await sleep(G.chain >= 3 ? 420 : 260);
       if (big.length >= 6) await sleep(60);
-      G.score += flat.length * 10 * Math.pow(2, G.chain - 1);
+      G.score += flat.length * 10 * Math.pow(2, G.chain - 1) * (Date.now() < G.feverUntil ? 2 : 1);
+      if (Date.now() >= G.feverUntil) {
+        G.fever += flat.length * 4;
+        if (G.fever >= 100) {
+          G.fever = 0;
+          G.feverUntil = Date.now() + 7000;
+          G.banner = 'FEVER x2!';
+          jingle([0, 2, 4, 6, 8, 9], 60);
+          doShake(12);
+        }
+      }
       for (const [r, c] of cells) G.board[r][c] = G.board[r][c] === CRACK ? ROCK : 0;
       G.popping = new Set();
       G.rings = [];
@@ -864,7 +927,7 @@ function Game() {
   };
 
   const speed = () =>
-    Math.max(110, G.base - Math.floor(G.placed / 8) * 30) * (Date.now() < G.slowUntil ? 2.5 : 1);
+    Math.max(110, G.base - Math.floor(G.placed / 8) * 30) * (Date.now() < G.slowUntil ? 2.5 : 1) * (Date.now() < G.feverUntil ? 1.8 : 1);
 
   useEffect(() => {
     alive.current = true;
@@ -936,7 +999,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 120) / COLS), Math.floor((height - 380) / ROWS))
+    Math.min(Math.floor((width - 120) / COLS), Math.floor((height - 390) / ROWS))
   );
 
   G.cell = cell;
@@ -1006,6 +1069,16 @@ function Game() {
         <View style={[styles.barFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
       </View>
 
+      <View style={[styles.bar, { height: 4, marginTop: -4, marginBottom: 4 }]}>
+        <View
+          style={{
+            height: 4,
+            width: `${Date.now() < G.feverUntil ? 100 : Math.min(100, G.fever)}%`,
+            backgroundColor: '#ffd23b',
+          }}
+        />
+      </View>
+
       <Text style={[styles.coach, { color: T.accent }]}>
         {G.status === 'menu' ? T.name : G.coach || T.name}
       </Text>
@@ -1031,7 +1104,7 @@ function Game() {
           })}
         </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }] }}>
-        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: T.border }]}>
+        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: Date.now() < G.feverUntil ? '#ffd23b' : T.border }]}>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
               {row.map((col, c) => (
@@ -1229,14 +1302,22 @@ function Game() {
                   </Text>
                   <Pressable
                     style={styles.play}
-                    onPress={() =>
-                      G.t === 'daily' ? shareDaily() : start(G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level)
-                    }
+                    onPress={nextAction}
                   >
                     <Text style={styles.playTxt}>
                       {G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
                     </Text>
                   </Pressable>
+                  {G.status === 'over' && !G.continued && G.t !== 'daily' && (
+                    <Pressable style={styles.adBtn} onPress={continueAfterAd}>
+                      <Text style={styles.adBtnTxt}>▶ WATCH AD: KEEP GOING</Text>
+                    </Pressable>
+                  )}
+                  {G.status === 'won' && G.earned < 3 && !G.starAd && (
+                    <Pressable style={styles.adBtn} onPress={adStar}>
+                      <Text style={styles.adBtnTxt}>▶ WATCH AD: +1 ★</Text>
+                    </Pressable>
+                  )}
                   <Pressable onPress={() => { G.status = 'menu'; render(); }}>
                     <Text style={styles.hint}>LEVELS</Text>
                   </Pressable>
@@ -1261,6 +1342,12 @@ function Game() {
           <HoldButton label="▶" onPress={() => move(1)} repeat />
         </View>
       </View>
+      {G.ad && (
+        <View style={styles.adCover}>
+          <Text style={styles.adTxt}>AD (placeholder)</Text>
+          <Text style={styles.adBig}>{G.ad.left}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -1324,6 +1411,11 @@ const styles = StyleSheet.create({
   hatch: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 8, letterSpacing: 1 },
   modeBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, borderWidth: 1.5, marginHorizontal: 5, backgroundColor: '#14142a' },
   modeTxt: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
+  adBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#ffd23b', backgroundColor: '#1a1a30' },
+  adBtnTxt: { color: '#ffd23b', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
+  adCover: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+  adTxt: { color: '#aaa', fontSize: 14, letterSpacing: 3 },
+  adBig: { color: '#fff', fontSize: 64, fontWeight: '900' },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
