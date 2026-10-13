@@ -609,7 +609,7 @@ function Game() {
   const nextAction = () => {
     if (G.t === 'daily') return shareDaily();
     const nxt = G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level;
-    if (G.status === 'won' && G.level >= 5 && G.level % 3 === 0) showAd(() => start(nxt));
+    if (G.status === 'won' && (G.level === 6 || G.level === 9 || (G.level >= 12 && G.level % 2 === 0))) showAd(() => start(nxt));
     else start(nxt);
     return null;
   };
