@@ -152,7 +152,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v11';
+const VERSION = 'v12';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -544,6 +544,7 @@ const MUS = {};
 const musBusy = {};
 let musWant = -1;
 let musRate = 1;
+let musHold = false;
 
 // music speeds up when the stack is near the top
 function setMusicRate(rate) {
@@ -586,7 +587,7 @@ function applyMusic() {
   for (const k of Object.keys(MUS)) {
     const pl = MUS[k];
     try {
-      if (Number(k) === musWant && !MUTED) pl.play();
+      if (Number(k) === musWant && !MUTED && !musHold) pl.play();
       else pl.pause();
     } catch (e) {}
   }
@@ -710,6 +711,10 @@ function Game() {
     board: emptyBoard(),
     piece: null,
     next: newPair(),
+    next2: newPair(),
+    lvlBest: {},
+    newBest: false,
+    pausedAt: 0,
     score: 0,
     best: 0,
     chain: 0,
@@ -758,6 +763,7 @@ function Game() {
   const float = useRef(new Animated.Value(0)).current;
   const flash = useRef(new Animated.Value(0)).current;
   const punch = useRef(new Animated.Value(1)).current;
+  const fallY = useRef(new Animated.Value(0)).current;
   const np = () => {
     if (G.seq && G.seq.length) {
       const q = G.seq.shift();
@@ -768,6 +774,16 @@ function Game() {
       return { a: PRISM, b: rnd(G.colors) };
     }
     return newPair(G.colors, G.level <= MAX_LEVEL && (G.fails[G.level] || 0) >= 2 ? 0.4 : 0);
+  };
+  // 2-pair queue. A prism from a x3+ chain still lands in the very next pair.
+  const shiftQueue = () => {
+    if (G.prismNext) {
+      G.prismNext = false;
+      G.next = { a: PRISM, b: rnd(G.colors) };
+    } else {
+      G.next = G.next2;
+    }
+    G.next2 = np();
   };
   const rocksLeft = () => G.board.flat().filter((v) => v === ROCK || v === CRACK).length;
   const goalMet = () =>
@@ -780,6 +796,17 @@ function Game() {
     : G.t === 'rocks' ? (G.rockStart ? 1 - rocksLeft() / G.rockStart : 0)
     : G.t === 'pairs' || G.t === 'daily' ? G.placed / G.goal
     : G.score / G.goal;
+  const soClose = () => {
+    if (G.t === 'endless' || G.t === 'daily') return null;
+    const p = progress();
+    if (p < 0.5) return null;
+    const left =
+      G.t === 'chain' ? `${Math.max(1, G.goal - G.maxChain)} more chain` :
+      G.t === 'rocks' ? `${rocksLeft()} rocks left` :
+      G.t === 'pairs' ? `${Math.max(1, G.goal - G.placed)} pairs to go` :
+      `${Math.max(1, G.goal - G.score)} points away`;
+    return { head: p >= 0.9 ? 'SO CLOSE!' : p >= 0.7 ? 'ALMOST THERE' : 'GOOD TRY', left };
+  };
   const goalText = () =>
     G.t === 'endless' ? 'ENDLESS'
     : G.t === 'chain' ? `CHAIN x${G.goal}`
@@ -844,6 +871,7 @@ function Game() {
     G.starAd = false;
     G.seq = (cfg.seq || []).map((x) => x.slice());
     G.next = np();
+    G.next2 = np();
     G.board = emptyBoard();
     const pre = cfg.pre || [];
     pre.forEach((row, i) => {
@@ -866,7 +894,7 @@ function Game() {
     G.popping = new Set();
     G.placed = 0;
     G.piece = spawn(G.next);
-    G.next = np();
+    shiftQueue();
     G.status = 'playing';
     render();
   };
@@ -969,7 +997,7 @@ function Game() {
       G.continued = true;
       G.status = 'playing';
       G.piece = spawn(G.next);
-      G.next = np();
+      shiftQueue();
     });
   const adStar = () =>
     showAd(() => {
@@ -1002,6 +1030,11 @@ function Game() {
     }
     G.status = 'won';
     G.fails[G.level] = 0;
+    G.newBest = G.score > (G.lvlBest[G.level] || 0);
+    if (G.newBest) {
+      G.lvlBest[G.level] = G.score;
+      AsyncStorage.setItem('lvlBest', JSON.stringify(G.lvlBest)).catch(() => {});
+    }
     jingle([0, 2, 4, 6, 9]);
     sfx('choir');
     G.earned =
@@ -1154,7 +1187,7 @@ function Game() {
       return;
     }
     G.piece = p;
-    G.next = np();
+    shiftQueue();
     G.status = 'playing';
     render();
   };
@@ -1206,6 +1239,8 @@ function Game() {
     if (valid(G.board, p2)) {
       G.piece = p2;
       G.lockAt = 0;
+      fallY.setValue(-(G.cell || 30));
+      Animated.timing(fallY, { toValue: 0, duration: 90, useNativeDriver: true }).start();
       render();
       return true;
     }
@@ -1269,6 +1304,22 @@ function Game() {
     })
   ).current;
 
+  const pause = () => {
+    if (G.status !== 'playing' || !G.piece) return;
+    G.status = 'paused';
+    G.pausedAt = Date.now();
+    render();
+  };
+  const resume = () => {
+    if (G.status !== 'paused') return;
+    const d = Date.now() - G.pausedAt;
+    if (G.feverUntil > G.pausedAt) G.feverUntil += d;
+    if (G.slowUntil > G.pausedAt) G.slowUntil += d;
+    G.lockAt = 0;
+    G.status = 'playing';
+    render();
+  };
+
   const usePower = (id) => {
     if (G.status !== 'playing' || !G.piece || G.used[id]) return;
     const isRock = (v) => v === ROCK || v === CRACK;
@@ -1279,6 +1330,7 @@ function Game() {
       G.board = G.snap.board.map((row) => row.slice());
       G.score = G.snap.score;
       G.placed = G.snap.placed;
+      G.next2 = G.next;
       G.next = { a: G.piece.a, b: G.piece.b };
       G.piece = spawn({ a: G.snap.a, b: G.snap.b });
       G.snap = null;
@@ -1372,6 +1424,14 @@ function Game() {
         }
       })
       .catch(() => {});
+    AsyncStorage.getItem('lvlBest')
+      .then((v) => {
+        if (v) {
+          G.lvlBest = JSON.parse(v) || {};
+          render();
+        }
+      })
+      .catch(() => {});
     AsyncStorage.getItem('stars')
       .then((v) => {
         if (v) {
@@ -1407,11 +1467,6 @@ function Game() {
   G.cell = cell;
   const danger = G.board.slice(0, 4).some((row) => row.some(Boolean));
   const display = G.board.map((row) => row.slice());
-  if (G.piece) {
-    for (const [r, c, col] of cellsOf(G.piece)) {
-      if (r >= 0 && r < ROWS && c >= 0 && c < COLS) display[r][c] = col;
-    }
-  }
 
   const realm = realmOf(G.status === 'menu' ? G.unlocked : G.level);
   useEffect(() => {
@@ -1422,6 +1477,11 @@ function Game() {
   useEffect(() => {
     setMusicRate(tense ? 1.15 : 1);
   }, [tense]);
+  const paused = G.status === 'paused';
+  useEffect(() => {
+    musHold = paused;
+    applyMusic();
+  }, [paused]);
   const T = REALMS[realm];
   let ghost = [];
   if (G.piece) {
@@ -1447,8 +1507,16 @@ function Game() {
         </View>
         <View style={{ alignItems: 'center' }}>
           <Text style={styles.label}>NEXT</Text>
-          <Orb color={G.next.b} size={26} />
-          <Orb color={G.next.a} size={26} />
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View>
+              <Orb color={G.next.b} size={26} />
+              <Orb color={G.next.a} size={26} />
+            </View>
+            <View style={{ marginLeft: 4, marginTop: 6, opacity: 0.55 }}>
+              <Orb color={G.next2.b} size={20} />
+              <Orb color={G.next2.a} size={20} />
+            </View>
+          </View>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={styles.label}>LEVEL</Text>
@@ -1462,6 +1530,9 @@ function Game() {
             }}
           >
             <Text style={styles.small}>☰ MENU</Text>
+          </Pressable>
+          <Pressable hitSlop={10} onPress={pause}>
+            <Text style={styles.small}>⏸ PAUSE</Text>
           </Pressable>
           <Pressable
             hitSlop={10}
@@ -1556,6 +1627,28 @@ function Game() {
             ]}
           />
 
+          {G.piece && (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: cell * COLS + 4,
+                height: cell * ROWS + 4,
+                transform: [{ translateY: fallY }],
+              }}
+            >
+              {cellsOf(G.piece).map(([r, c, col], k) =>
+                r >= 0 && r < ROWS && c >= 0 && c < COLS ? (
+                  <View key={k} style={{ position: 'absolute', left: 2 + c * cell, top: 2 + r * cell }}>
+                    <Orb color={col} size={cell} worry={danger} />
+                  </View>
+                ) : null
+              )}
+            </Animated.View>
+          )}
+
           {danger && G.status === 'playing' && (
             <Animated.View
               pointerEvents="none"
@@ -1600,7 +1693,23 @@ function Game() {
 
           {G.status !== 'playing' && G.status !== 'resolving' && (
             <View style={styles.overlay}>
-              {G.status === 'menu' ? (
+              {G.status === 'paused' ? (
+                <>
+                  <Text style={styles.title}>PAUSED</Text>
+                  <Pressable style={styles.play} onPress={resume}>
+                    <Text style={styles.playTxt}>RESUME</Text>
+                  </Pressable>
+                  <Pressable
+                    style={{ marginTop: 18 }}
+                    onPress={() => {
+                      G.status = 'menu';
+                      render();
+                    }}
+                  >
+                    <Text style={styles.hint}>QUIT TO LEVELS</Text>
+                  </Pressable>
+                </>
+              ) : G.status === 'menu' ? (
                 <>
                   {[1, 2, 3, 4, 5].map((k) => (
                     <Animated.View
@@ -1756,6 +1865,11 @@ function Game() {
                       {'★'.repeat(G.earned) + '☆'.repeat(3 - G.earned)}
                     </Text>
                   )}
+                  {G.status === 'over' && soClose() && (
+                    <Text style={[styles.hatch, { color: T.accent }]}>
+                      {soClose().head}{'\n'}{soClose().left}
+                    </Text>
+                  )}
                   {G.status === 'won' && G.boss && (
                     <Text style={[styles.hatch, { color: '#ffd23b' }]}>BOSS DEFEATED!</Text>
                   )}
@@ -1768,7 +1882,7 @@ function Game() {
                   )}
                   <Text style={styles.overScore}>
                     {G.status === 'won' || G.t === 'endless' || G.t === 'daily'
-                      ? `${G.score} pts`
+                      ? `${G.score} pts${G.status === 'won' && G.t !== 'daily' ? (G.newBest ? ' • NEW BEST!' : ` • best ${G.lvlBest[G.level] || 0}`) : ''}`
                       : `${Math.min(99, Math.round(progress() * 100))}% there`}
                     {'  •  '}best chain x{G.maxChain}
                   </Text>
