@@ -1,8 +1,9 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Animated,
+  View, Text, Pressable, StyleSheet, Animated, ScrollView,
   useWindowDimensions, StatusBar, PanResponder, Share,
 } from 'react-native';
+import { Image, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
@@ -612,8 +613,8 @@ async function loadAllMusic() {
 /* ============================== ONLINE (optional) ============================== */
 // Fully optional: with the two constants below left empty, the game never touches the network.
 // Fill them in once the Supabase tables exist (see supabase_chainorb.sql).
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || ''; // public client key; access is limited by row-level security
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://ipaophblasfxycicsurn.supabase.co';
+const SUPABASE_ANON = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_za3YxnBct36Q_n8I-rniLg_o4u4C3tN'; // public client key; access is limited by row-level security
 const ONLINE = !!(SUPABASE_URL && SUPABASE_ANON);
 let PID = 'p' + Math.random().toString(36).slice(2, 10);
 let NICK = 'Orb' + (1000 + Math.floor(Math.random() * 9000));
@@ -1781,7 +1782,7 @@ function Game() {
           <Animated.View
             pointerEvents="none"
             style={[
-              StyleSheet.absoluteFillObject,
+              ABS_FILL,
               { borderRadius: 10, backgroundColor: T.accent, opacity: flash },
             ]}
           />
@@ -1812,7 +1813,7 @@ function Game() {
             <Animated.View
               pointerEvents="none"
               style={[
-                StyleSheet.absoluteFillObject,
+                ABS_FILL,
                 {
                   borderRadius: 10,
                   borderWidth: 3,
@@ -1870,7 +1871,7 @@ function Game() {
                   </Pressable>
                 </>
               ) : G.status === 'menu' ? (
-                <>
+                <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
                   {[1, 2, 3, 4, 5].map((k) => (
                     <Animated.View
                       key={k}
@@ -1965,7 +1966,7 @@ function Game() {
                       </Text>
                     </Pressable>
                   ) : null}
-                </>
+                </ScrollView>
               ) : G.status === 'shop' ? (
                 <>
                   <Text style={styles.title}>MISSIONS</Text>
@@ -2125,6 +2126,7 @@ function Game() {
 }
 
 /* ============================== STYLES ============================== */
+const ABS_FILL = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 };
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -2150,7 +2152,7 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...ABS_FILL,
     backgroundColor: 'rgba(5,5,12,0.88)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2168,7 +2170,7 @@ const styles = StyleSheet.create({
   playTxt: { color: '#04140b', fontSize: 20, fontWeight: '900', letterSpacing: 2 },
   hint: { color: '#6b6b8a', marginTop: 16, fontSize: 12 },
   bannerWrap: {
-    ...StyleSheet.absoluteFillObject,
+    ...ABS_FILL,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2185,18 +2187,18 @@ const styles = StyleSheet.create({
   modeTxt: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
   adBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#ffd23b', backgroundColor: '#1a1a30' },
   adBtnTxt: { color: '#ffd23b', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
-  adCover: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+  adCover: { ...ABS_FILL, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
   adTxt: { color: '#aaa', fontSize: 14, letterSpacing: 3 },
   adBig: { color: '#fff', fontSize: 64, fontWeight: '900' },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '92%', marginTop: 14 },
-  lvl: { width: 46, height: 50, margin: 4, borderRadius: 12, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '100%', marginTop: 10 },
+  lvl: { width: 36, height: 42, margin: 3, borderRadius: 10, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
   lvlLocked: { borderColor: '#2a2a4a', opacity: 0.5 },
   stars: { color: '#ffd23b', fontSize: 9, marginTop: 2 },
   bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
-  lvlTxt: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  lvlTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
   controls: { width: '94%', marginTop: 10 },
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
@@ -2215,6 +2217,54 @@ const styles = StyleSheet.create({
   dropBtn: { backgroundColor: '#3a1a30', borderColor: '#ff3b6b' },
 });
 
+
+/* ============================== INTRO ============================== */
+// Native splash is a plain dark screen; this draws the logo: it rolls in from the left,
+// spinning clockwise, settles upright in the centre, then fades into the game.
+let SplashScreen = null;
+try {
+  SplashScreen = require('expo-splash-screen');
+  SplashScreen.preventAutoHideAsync().catch(() => {});
+} catch (e) {
+  SplashScreen = null; // older dev build without the native module: just skip it
+}
+function Intro({ onDone }) {
+  const { width } = useWindowDimensions();
+  const SIZE = Math.min(240, Math.round(width * 0.62));
+  const t = useRef(new Animated.Value(0)).current;
+  const fade = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    try {
+      if (SplashScreen) SplashScreen.hideAsync().catch(() => {});
+    } catch (e) {}
+    const anim = Animated.sequence([
+      Animated.timing(t, { toValue: 1, duration: 1800, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.delay(450),
+      Animated.timing(fade, { toValue: 0, duration: 350, useNativeDriver: true }),
+    ]);
+    anim.start(({ finished }) => {
+      if (finished) onDone();
+    });
+    return () => anim.stop();
+  }, []);
+  const x = t.interpolate({ inputRange: [0, 1], outputRange: [-(width / 2 + SIZE), 0] });
+  const rot = t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '720deg'] }); // positive = clockwise
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+        backgroundColor: '#05050c', alignItems: 'center', justifyContent: 'center',
+        opacity: fade, zIndex: 999, elevation: 999,
+      }}
+    >
+      <Animated.Image
+        source={require('./assets/logo.png')}
+        resizeMode="contain"
+        style={{ width: SIZE, height: SIZE, transform: [{ translateX: x }, { rotate: rot }] }}
+      />
+    </Animated.View>
+  );
+}
 
 class Boundary extends React.Component {
   state = { err: null };
@@ -2246,9 +2296,13 @@ class Boundary extends React.Component {
 }
 
 export default function App() {
+  const [intro, setIntro] = useState(true);
   return (
     <Boundary>
-      <Game />
+      <View style={{ flex: 1, backgroundColor: '#05050c' }}>
+        <Game />
+        {intro ? <Intro onDone={() => setIntro(false)} /> : null}
+      </View>
     </Boundary>
   );
 }
