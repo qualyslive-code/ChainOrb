@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated,
-  useWindowDimensions, StatusBar, PanResponder,
+  useWindowDimensions, StatusBar, PanResponder, Share,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,18 +13,20 @@ const COLS = 6;
 const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b', '#9a9ac0'];
+const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
 const ROCK = 6;
 const BOMB = 7;
 const CRACK = 8;
+const PRISM = 9;
 // child offset by orientation: 0 up, 1 right, 2 down, 3 left
 const OFF = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rnd = (n) => 1 + Math.floor(Math.random() * n);
+let RNG = Math.random;
+const rnd = (n) => 1 + Math.floor(RNG() * n);
 const newPair = (n = 3, help = 0) => {
   const a = rnd(n);
-  return { a, b: Math.random() < help ? a : rnd(n) };
+  return { a, b: RNG() < help ? a : rnd(n) };
 };
 const levelCfg = (L) => ({
   goal: 300 + (L - 1) * 150,
@@ -144,7 +146,34 @@ const LEVELS = [
   { t: 'score', g: 2000, c: 5, s: 560, coach: 'Marathon. Keep the chains coming' },
   { t: 'pairs', g: 36, c: 5, s: 560, rain: 3, rocks: 4, coach: 'Gauntlet' },
   { t: 'score', g: 2600, c: 5, s: 520, m: 40, rocks: 8, coach: 'FINAL BOSS: Kampala Neon' },
+  { t: 'endless', g: 99999999, c: 5, s: 600, rain: 6, coach: 'ENDLESS: how long can you chain?' },
+  { t: 'daily', g: 40, c: 5, s: 620, rain: 5, coach: 'DAILY CHAIN: same board for everyone' },
 ];
+
+/* ============================== SAFETY NET, DAILY ============================== */
+const VERSION = 'v7';
+// Any crash is saved and shown on the menu next launch, so every build tells us what broke.
+try {
+  const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
+  if (global.ErrorUtils) {
+    global.ErrorUtils.setGlobalHandler((e, fatal) => {
+      AsyncStorage.setItem('lastError', String((e && e.stack) || e).slice(0, 1200)).catch(() => {});
+      if (prevH) prevH(e, fatal);
+    });
+  }
+} catch (e) {}
+const seeded = (a) => () => {
+  a |= 0;
+  a = (a + 0x6d2b79f5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const dateKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const dateSeed = () => Number(dateKey().replace(/-/g, ''));
 
 /* ============================== ORBLINGS ============================== */
 // Stars hatch creatures. Each gives one power per level.
@@ -298,8 +327,8 @@ function Orb({ color, size, popping, worry }) {
           flex: 1,
           borderRadius: size,
           backgroundColor: popping ? '#ffffff' : color === BOMB ? '#2a1408' : COLORS[color],
-          borderWidth: color === BOMB ? 3 : color === CRACK ? 2 : 0,
-          borderColor: color === CRACK ? '#e0e0ff' : '#ff8a3b',
+          borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : 0,
+          borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : '#ff8a3b',
           shadowColor: COLORS[color],
           shadowOpacity: 1,
           shadowRadius: 8,
@@ -365,7 +394,7 @@ function HoldButton({ label, onPress, repeat, style }) {
 }
 
 /* ============================== GAME ============================== */
-export default function App() {
+function Game() {
   const { width, height } = useWindowDimensions();
 
   // all game state lives in one stable object; render() just redraws
@@ -391,6 +420,9 @@ export default function App() {
     rings: [],
     earned: 1,
     fails: {},
+    daily: null,
+    lastErr: '',
+    prismNext: false,
     used: {},
     snap: null,
     slowUntil: 0,
@@ -412,23 +444,28 @@ export default function App() {
       const q = G.seq.shift();
       return { a: q[0], b: q[1] };
     }
-    return newPair(G.colors, (G.fails[G.level] || 0) >= 2 ? 0.4 : 0);
+    if (G.prismNext) {
+      G.prismNext = false;
+      return { a: PRISM, b: rnd(G.colors) };
+    }
+    return newPair(G.colors, G.level <= MAX_LEVEL && (G.fails[G.level] || 0) >= 2 ? 0.4 : 0);
   };
   const rocksLeft = () => G.board.flat().filter((v) => v === ROCK || v === CRACK).length;
   const goalMet = () =>
     G.t === 'chain' ? G.maxChain >= G.goal
     : G.t === 'rocks' ? rocksLeft() === 0
-    : G.t === 'pairs' ? G.placed >= G.goal
+    : G.t === 'pairs' || G.t === 'daily' ? G.placed >= G.goal
     : G.score >= G.goal;
   const progress = () =>
     G.t === 'chain' ? G.maxChain / G.goal
     : G.t === 'rocks' ? (G.rockStart ? 1 - rocksLeft() / G.rockStart : 0)
-    : G.t === 'pairs' ? G.placed / G.goal
+    : G.t === 'pairs' || G.t === 'daily' ? G.placed / G.goal
     : G.score / G.goal;
   const goalText = () =>
-    G.t === 'chain' ? `CHAIN x${G.goal}`
+    G.t === 'endless' ? 'ENDLESS'
+    : G.t === 'chain' ? `CHAIN x${G.goal}`
     : G.t === 'rocks' ? `ROCKS ${rocksLeft()}`
-    : G.t === 'pairs' ? `SURVIVE ${Math.min(G.placed, G.goal)}/${G.goal}`
+    : G.t === 'pairs' || G.t === 'daily' ? `SURVIVE ${Math.min(G.placed, G.goal)}/${G.goal}`
     : `GOAL ${G.goal}`;
 
   const buzz = (n) => {
@@ -453,6 +490,7 @@ export default function App() {
   };
 
   const start = (L) => {
+    RNG = L === 22 ? seeded(dateSeed()) : Math.random;
     const cfg = LEVELS[L - 1];
     G.level = L;
     G.t = cfg.t;
@@ -467,6 +505,7 @@ export default function App() {
     G.slowUntil = 0;
     G.hatched = null;
     G.boss = false;
+    G.prismNext = false;
     G.seq = (cfg.seq || []).map((x) => x.slice());
     G.next = np();
     G.board = emptyBoard();
@@ -478,8 +517,8 @@ export default function App() {
       }
     });
     for (let i = 0; i < cfg.rocks; i++) {
-      const r = ROWS - 1 - Math.floor(Math.random() * 4);
-      const c = Math.floor(Math.random() * COLS);
+      const r = ROWS - 1 - Math.floor(RNG() * 4);
+      const c = Math.floor(RNG() * COLS);
       G.board[r][c] = ROCK;
     }
     gravity(G.board);
@@ -498,6 +537,7 @@ export default function App() {
 
   const gameOver = () => {
     G.fails[G.level] = (G.fails[G.level] || 0) + 1;
+    if (G.t === 'daily') saveDaily();
     G.status = 'over';
     jingle([3, 2, 1, 0], 140);
     sfx('bass');
@@ -510,7 +550,27 @@ export default function App() {
     render();
   };
 
+  const saveDaily = () => {
+    G.daily = { d: dateKey(), s: G.score, c: G.maxChain };
+    AsyncStorage.setItem('daily', JSON.stringify(G.daily)).catch(() => {});
+  };
+  const shareDaily = () => {
+    const d = G.daily || { d: dateKey(), s: G.score, c: G.maxChain };
+    Share.share({
+      message: `ChainOrb Daily ${d.d}\n${d.s} pts • best chain x${d.c}\nCan you beat me?`,
+    }).catch(() => {});
+  };
+
   const win = () => {
+    if (G.t === 'daily') {
+      saveDaily();
+      G.status = 'over';
+      G.piece = null;
+      jingle([0, 2, 4, 6, 9]);
+      sfx('choir');
+      render();
+      return;
+    }
     G.status = 'won';
     G.fails[G.level] = 0;
     jingle([0, 2, 4, 6, 9]);
@@ -585,6 +645,7 @@ export default function App() {
       render();
       buzz(G.chain);
       playChain(G.chain, flat.length);
+      if (G.chain >= 3) G.prismNext = true;
       if (G.chain >= 2) setTimeout(() => buzz(G.chain), 90);
       if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
       await sleep(G.chain >= 3 ? 420 : 260);
@@ -628,7 +689,7 @@ export default function App() {
       return;
     }
     if (G.rain && G.placed % G.rain === 0) {
-      const rc = Math.floor(Math.random() * COLS);
+      const rc = Math.floor(RNG() * COLS);
       if (!G.board[0][rc]) {
         G.board[0][rc] = ROCK;
         gravity(G.board);
@@ -659,6 +720,30 @@ export default function App() {
       b: G.piece.b,
     };
     for (const [r, c, col] of cellsOf(G.piece)) G.board[r][c] = col;
+    const pr = cellsOf(G.piece).find((x) => x[2] === PRISM);
+    if (pr) {
+      const [pr_r, pr_c] = pr;
+      let tc = 0;
+      const below = pr_r + 1 < ROWS ? G.board[pr_r + 1][pr_c] : 0;
+      if (below >= 1 && below <= 5) tc = below;
+      else {
+        for (const [dy, dx] of [[0, 1], [0, -1], [-1, 0]]) {
+          const y = pr_r + dy;
+          const x = pr_c + dx;
+          if (y >= 0 && y < ROWS && x >= 0 && x < COLS && G.board[y][x] >= 1 && G.board[y][x] <= 5) {
+            tc = G.board[y][x];
+            break;
+          }
+        }
+      }
+      G.board[pr_r][pr_c] = 0;
+      if (tc) {
+        G.score += G.board.flat().filter((v) => v === tc).length * 10;
+        G.board = G.board.map((row) => row.map((v) => (v === tc ? 0 : v)));
+        jingle([2, 5, 7, 9], 60);
+        doShake(10);
+      }
+    }
     G.piece = null;
     G.placed++;
     resolve();
@@ -784,6 +869,22 @@ export default function App() {
   useEffect(() => {
     alive.current = true;
     initSound();
+    AsyncStorage.getItem('lastError')
+      .then((v) => {
+        if (v) {
+          G.lastErr = v;
+          render();
+        }
+      })
+      .catch(() => {});
+    AsyncStorage.getItem('daily')
+      .then((v) => {
+        if (v) {
+          G.daily = JSON.parse(v);
+          render();
+        }
+      })
+      .catch(() => {});
     AsyncStorage.getItem('muted')
       .then((v) => {
         MUTED = v === '1';
@@ -1044,7 +1145,7 @@ export default function App() {
                       {ORBLINGS.map((o) => (totalStars(G.stars) >= o.need ? o.icon : '🥚')).join(' ')}
                     </Text>
                   </Animated.View>
-                  <Text style={styles.hint}>{orblingLine(G.stars)}</Text>
+                  <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}</Text>
                   <View style={styles.grid}>
                     {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((L) => {
                       const open = L <= G.unlocked;
@@ -1065,6 +1166,34 @@ export default function App() {
                       );
                     })}
                   </View>
+                  <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                    <Pressable
+                      onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
+                      style={[styles.modeBtn, { borderColor: '#ffd23b' }]}
+                    >
+                      <Text style={styles.modeTxt}>
+                        {G.daily && G.daily.d === dateKey() ? 'DAILY ✓ SHARE' : '🔥 DAILY'}
+                      </Text>
+                    </Pressable>
+                    {G.stars[20] ? (
+                      <Pressable onPress={() => start(21)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
+                        <Text style={styles.modeTxt}>∞ ENDLESS</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {G.lastErr ? (
+                    <Pressable
+                      onPress={() => {
+                        G.lastErr = '';
+                        AsyncStorage.removeItem('lastError').catch(() => {});
+                        render();
+                      }}
+                    >
+                      <Text numberOfLines={5} style={{ color: '#ff3b6b', fontSize: 9, width: 280, marginTop: 6 }}>
+                        LAST ERROR (tap to clear): {G.lastErr}
+                      </Text>
+                    </Pressable>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -1073,6 +1202,8 @@ export default function App() {
                       ? `LEVEL ${G.level} CLEAR`
                       : G.moves && G.placed >= G.moves
                       ? 'OUT OF MOVES'
+                      : G.t === 'daily'
+                      ? 'DAILY CHAIN'
                       : 'GAME OVER'}
                   </Text>
                   {G.status === 'won' && (
@@ -1091,17 +1222,19 @@ export default function App() {
                     </Text>
                   )}
                   <Text style={styles.overScore}>
-                    {G.status === 'won'
+                    {G.status === 'won' || G.t === 'endless' || G.t === 'daily'
                       ? `${G.score} pts`
                       : `${Math.min(99, Math.round(progress() * 100))}% there`}
                     {'  •  '}best chain x{G.maxChain}
                   </Text>
                   <Pressable
                     style={styles.play}
-                    onPress={() => start(G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level)}
+                    onPress={() =>
+                      G.t === 'daily' ? shareDaily() : start(G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level)
+                    }
                   >
                     <Text style={styles.playTxt}>
-                      {G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
+                      {G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
                     </Text>
                   </Pressable>
                   <Pressable onPress={() => { G.status = 'menu'; render(); }}>
@@ -1189,11 +1322,13 @@ const styles = StyleSheet.create({
   },
   chip: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: '#14142a' },
   hatch: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 8, letterSpacing: 1 },
+  modeBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, borderWidth: 1.5, marginHorizontal: 5, backgroundColor: '#14142a' },
+  modeTxt: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '92%', marginTop: 14 },
-  lvl: { width: 48, height: 56, margin: 4, borderRadius: 12, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
+  lvl: { width: 46, height: 50, margin: 4, borderRadius: 12, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
   lvlLocked: { borderColor: '#2a2a4a', opacity: 0.5 },
   stars: { color: '#ffd23b', fontSize: 9, marginTop: 2 },
   bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
@@ -1215,3 +1350,41 @@ const styles = StyleSheet.create({
   btnTxt: { color: '#fff', fontSize: 22, fontWeight: '700' },
   dropBtn: { backgroundColor: '#3a1a30', borderColor: '#ff3b6b' },
 });
+
+
+class Boundary extends React.Component {
+  state = { err: null };
+  static getDerivedStateFromError(err) {
+    return { err };
+  }
+  componentDidCatch(err) {
+    AsyncStorage.setItem('lastError', String((err && err.stack) || err).slice(0, 1200)).catch(() => {});
+  }
+  render() {
+    if (this.state.err) {
+      const e = this.state.err;
+      return (
+        <View style={{ flex: 1, backgroundColor: '#0a0a14', padding: 24, paddingTop: 60 }}>
+          <Text style={{ color: '#ff3b6b', fontSize: 18, fontWeight: '800' }}>
+            ChainOrb crashed ({VERSION})
+          </Text>
+          <Text selectable style={{ color: '#ddd', marginTop: 12, fontSize: 12 }}>
+            {String((e && e.stack) || e).slice(0, 1500)}
+          </Text>
+          <Pressable onPress={() => this.setState({ err: null })} style={{ marginTop: 20 }}>
+            <Text style={{ color: '#2bff88', fontSize: 16 }}>TRY AGAIN</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <Boundary>
+      <Game />
+    </Boundary>
+  );
+}
