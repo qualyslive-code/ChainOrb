@@ -14,6 +14,7 @@ const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
 const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
+const GLYPHS = ['', '●', '▲', '■', '◆', '★']; // shapes keep colors readable for color-blind players
 const ROCK = 6;
 const BOMB = 7;
 const CRACK = 8;
@@ -151,7 +152,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v9';
+const VERSION = 'v11';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -328,6 +329,7 @@ async function initSound() {
     } catch (e) {}
     await new Promise((r) => setTimeout(r, 0));
   }
+  await genInstruments();
   loadAllMusic();
 }
 function sfx(name) {
@@ -348,6 +350,114 @@ function playChain(chain, count) {
   if (chain >= 2) sfx('bass');
   if (chain >= 3) sfx('kick');
   if (chain >= 5) sfx('choir');
+}
+
+/* ============================== REALM INSTRUMENTS ============================== */
+// Chain notes change instrument with the realm:
+// Savanna = kalimba, Lake = adungu (harp), Ice = glass bell, Neon = afrobeat conga.
+// All synthesized in code. Files are written once; only the active realm's 10 players stay loaded.
+function normalize(x, peak) {
+  let m = 0;
+  for (let i = 0; i < x.length; i++) m = Math.max(m, Math.abs(x[i]));
+  const s = m > 0 ? peak / m : 1;
+  for (let i = 0; i < x.length; i++) x[i] *= s;
+  return x;
+}
+function kalimba(f) {
+  const n = Math.floor(SR * 0.6);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const body = Math.sin(2 * Math.PI * f * t) * Math.exp(-5 * t);
+    const tine = Math.sin(2 * Math.PI * f * 5.4 * t) * Math.exp(-30 * t) * 0.35; // metallic ping
+    const wood = Math.sin(2 * Math.PI * f * 0.5 * t) * Math.exp(-35 * t) * 0.25; // thumb on wood
+    out[i] = Math.min(1, t / 0.002) * (body + tine + wood);
+  }
+  return normalize(out, 0.6);
+}
+function adungu(f) {
+  const n = Math.floor(SR * 0.9);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    let v = 0;
+    for (let k = 1; k <= 6; k++) v += (Math.sin(2 * Math.PI * f * k * t) * Math.exp(-(2 + 2.8 * k) * t)) / k;
+    out[i] = Math.min(1, t / 0.002) * v;
+  }
+  return normalize(out, 0.6);
+}
+function glassBell(f) {
+  const ratio = [1, 2.76, 5.4, 8.93];
+  const amp = [1, 0.5, 0.25, 0.12];
+  const dec = [3, 4.5, 7, 10];
+  const n = Math.floor(SR * 0.9);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    let v = 0;
+    for (let k = 0; k < 4; k++) v += amp[k] * Math.sin(2 * Math.PI * f * ratio[k] * t) * Math.exp(-dec[k] * t);
+    out[i] = Math.min(1, t / 0.002) * v;
+  }
+  return normalize(out, 0.55);
+}
+function conga(f) {
+  const n = Math.floor(SR * 0.35);
+  const out = new Float32Array(n);
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    ph += (2 * Math.PI * (f * 0.9 + f * 0.6 * Math.exp(-t * 60))) / SR; // pitch drops on the hit
+    const slap = (Math.random() * 2 - 1) * Math.exp(-t * 120) * 0.3;
+    out[i] = Math.sin(ph) * Math.exp(-t * 9) + slap;
+  }
+  return normalize(out, 0.7);
+}
+const INSTR = [kalimba, adungu, glassBell, conga];
+const INSTR_URI = {};
+let instrReady = false;
+let instrWant = -1;
+let instrCur = -1;
+
+function saveWav(name, samples) {
+  const bytes = wav(samples);
+  try {
+    const f = new File(Paths.cache, name);
+    if (f.exists) f.delete();
+    f.create();
+    f.write(bytes);
+    return f.uri;
+  } catch (e) {
+    return 'data:audio/wav;base64,' + b64(bytes);
+  }
+}
+async function genInstruments() {
+  try {
+    for (let r = 0; r < INSTR.length; r++) {
+      INSTR_URI[r] = NOTES.map((f, i) => saveWav(`co_r${r}_n${i}.wav`, INSTR[r](f)));
+      await new Promise((res) => setTimeout(res, 0));
+    }
+    instrReady = true;
+    applyInstrument();
+  } catch (e) {}
+}
+function applyInstrument() {
+  if (!instrReady || instrWant < 0 || instrWant === instrCur) return;
+  for (let i = 0; i < NOTES.length; i++) {
+    try {
+      const old = P['n' + i];
+      P['n' + i] = createAudioPlayer({ uri: INSTR_URI[instrWant][i] });
+      if (old) {
+        try {
+          old.remove();
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  instrCur = instrWant;
+}
+function setInstrument(r) {
+  instrWant = r;
+  applyInstrument();
 }
 
 /* ============================== MUSIC ============================== */
@@ -433,6 +543,17 @@ async function makeTrack(d) {
 const MUS = {};
 const musBusy = {};
 let musWant = -1;
+let musRate = 1;
+
+// music speeds up when the stack is near the top
+function setMusicRate(rate) {
+  musRate = rate;
+  for (const k of Object.keys(MUS)) {
+    try {
+      MUS[k].setPlaybackRate(rate);
+    } catch (e) {}
+  }
+}
 
 async function loadMusic(r) {
   if (MUS[r] || musBusy[r]) return;
@@ -452,6 +573,9 @@ async function loadMusic(r) {
     const pl = createAudioPlayer({ uri });
     pl.loop = true;
     pl.volume = 0.3;
+    try {
+      pl.setPlaybackRate(musRate);
+    } catch (e) {}
     MUS[r] = pl;
   } catch (e) {}
   musBusy[r] = false;
@@ -529,6 +653,21 @@ function Orb({ color, size, popping, worry }) {
               />
             ))}
           </View>
+        )}
+        {color >= 1 && color <= 5 && (
+          <Text
+            style={{
+              position: 'absolute',
+              top: sk === 'gem' ? size * 0.3 : size * 0.62,
+              fontSize: size * 0.26,
+              fontWeight: '900',
+              includeFontPadding: false,
+              color: sk === 'ring' ? COLORS[color] : 'rgba(20,20,42,0.6)',
+              transform: sk === 'gem' ? [{ rotate: '-45deg' }] : [],
+            }}
+          >
+            {GLYPHS[color]}
+          </Text>
         )}
       </View>
     </View>
@@ -617,6 +756,8 @@ function Game() {
   const shake = useRef(new Animated.Value(0)).current;
   const burst = useRef(new Animated.Value(0)).current;
   const float = useRef(new Animated.Value(0)).current;
+  const flash = useRef(new Animated.Value(0)).current;
+  const punch = useRef(new Animated.Value(1)).current;
   const np = () => {
     if (G.seq && G.seq.length) {
       const q = G.seq.shift();
@@ -656,6 +797,18 @@ function Game() {
           : Haptics.ImpactFeedbackStyle.Light;
       Haptics.impactAsync(style).catch(() => {});
     } catch (e) {}
+  };
+
+  const doFlash = (power) => {
+    flash.setValue(power);
+    Animated.timing(flash, { toValue: 0, duration: 520, useNativeDriver: true }).start();
+  };
+
+  const doPunch = () => {
+    Animated.sequence([
+      Animated.timing(punch, { toValue: 1.045, duration: 70, useNativeDriver: true }),
+      Animated.timing(punch, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
   };
 
   const doShake = (p) => {
@@ -917,8 +1070,6 @@ function Game() {
       const cells = [...hit].map((k) => [Math.floor(k / COLS), k % COLS]);
       G.rings = cells.map(([r, c]) => ({ r, c, col: G.board[r][c] }));
       G.popping = hit;
-      burst.setValue(0);
-      Animated.timing(burst, { toValue: 1, duration: 280, useNativeDriver: true }).start();
       if (G.chain >= 2) G.banner = `x${G.chain} CHAIN`;
       render();
       buzz(G.chain);
@@ -927,9 +1078,18 @@ function Game() {
       track('pops', flat.length);
       track('chain', G.chain);
       if (G.chain >= 2) setTimeout(() => buzz(G.chain), 90);
-      if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
-      await sleep(G.chain >= 3 ? 420 : 260);
+      // hit-stop: the pop frame freezes for 60 ms on a pop of 6+
       if (big.length >= 6) await sleep(60);
+      burst.setValue(0);
+      Animated.timing(burst, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+      if (G.chain >= 3) {
+        doShake(Math.min(4 + G.chain * 2, 16));
+        // wave of light; at x7 and above the whole world flares
+        doFlash(G.chain >= 7 ? 0.5 : Math.min(0.36, 0.14 + G.chain * 0.04));
+      }
+      if (G.chain >= 4) doPunch();
+      // slow-mo: the cascade ripples out slower from chain 3 up
+      await sleep(G.chain >= 3 ? 520 : 260);
       G.score += flat.length * 10 * Math.pow(2, G.chain - 1) * (Date.now() < G.feverUntil ? 2 : 1);
       if (Date.now() >= G.feverUntil) {
         G.fever += flat.length * 4;
@@ -1256,7 +1416,12 @@ function Game() {
   const realm = realmOf(G.status === 'menu' ? G.unlocked : G.level);
   useEffect(() => {
     setMusic(realm);
+    setInstrument(realm);
   }, [realm, MUTED]);
+  const tense = danger && (G.status === 'playing' || G.status === 'resolving');
+  useEffect(() => {
+    setMusicRate(tense ? 1.15 : 1);
+  }, [tense]);
   const T = REALMS[realm];
   let ghost = [];
   if (G.piece) {
@@ -1349,7 +1514,7 @@ function Game() {
             );
           })}
         </View>
-      <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }] }}>
+      <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: Date.now() < G.feverUntil ? '#ffd23b' : T.border }]}>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
@@ -1382,6 +1547,14 @@ function Game() {
               }}
             />
           ))}
+
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFillObject,
+              { borderRadius: 10, backgroundColor: T.accent, opacity: flash },
+            ]}
+          />
 
           {danger && G.status === 'playing' && (
             <Animated.View
