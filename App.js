@@ -151,7 +151,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v8';
+const VERSION = 'v9';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -169,11 +169,43 @@ const seeded = (a) => () => {
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
-const dateKey = () => {
-  const d = new Date();
+const dateKey = (d = new Date()) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 const dateSeed = () => Number(dateKey().replace(/-/g, ''));
+
+// ad pacing: one place to tune. Never two interstitials within 2 minutes.
+let lastAdAt = 0;
+const adDue = (L) => (L === 6 || L === 9 || (L >= 12 && L % 2 === 0)) && Date.now() - lastAdAt > 120000;
+
+// free orb skins, earned with shards from daily missions
+let SKIN = 'gel';
+const SKINS = [
+  { id: 'gel', name: 'GEL', cost: 0 },
+  { id: 'gem', name: 'GEM', cost: 3 },
+  { id: 'ring', name: 'RING', cost: 6 },
+  { id: 'candy', name: 'CANDY', cost: 10 },
+];
+const MPOOL = [
+  { k: 'pops', need: 60, text: 'Pop 60 orbs' },
+  { k: 'pops', need: 120, text: 'Pop 120 orbs' },
+  { k: 'chain', need: 3, text: 'Reach a x3 chain' },
+  { k: 'chain', need: 4, text: 'Reach a x4 chain' },
+  { k: 'levels', need: 2, text: 'Clear 2 levels' },
+  { k: 'levels', need: 3, text: 'Clear 3 levels' },
+  { k: 'stars', need: 4, text: 'Earn 4 stars' },
+  { k: 'fever', need: 1, text: 'Trigger Fever' },
+];
+const genMissions = () => {
+  const r = seeded(dateSeed() + 7);
+  const pool = MPOOL.slice();
+  const items = [];
+  while (items.length < 3 && pool.length) {
+    const it = pool.splice(Math.floor(r() * pool.length), 1)[0];
+    if (!items.some((x) => x.k === it.k)) items.push({ ...it, have: 0, done: false });
+  }
+  return { d: dateKey(), items };
+};
 
 /* ============================== ORBLINGS ============================== */
 // Stars hatch creatures. Each gives one power per level.
@@ -320,20 +352,21 @@ function playChain(chain, count) {
 /* ============================== UI PARTS ============================== */
 function Orb({ color, size, popping, worry }) {
   if (!color) return <View style={{ width: size, height: size }} />;
+  const sk = color >= 1 && color <= 5 ? SKIN : 'gel';
   return (
     <View style={{ width: size, height: size, padding: size * 0.06 }}>
       <View
         style={{
           flex: 1,
-          borderRadius: size,
-          backgroundColor: popping ? '#ffffff' : color === BOMB ? '#2a1408' : COLORS[color],
-          borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : 0,
-          borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : '#ff8a3b',
+          borderRadius: sk === 'gem' ? size * 0.2 : size,
+          backgroundColor: popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : COLORS[color],
+          borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? size * 0.14 : sk === 'candy' ? 3 : 0,
+          borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color] : sk === 'candy' ? 'rgba(255,255,255,0.75)' : '#ff8a3b',
           shadowColor: COLORS[color],
           shadowOpacity: 1,
           shadowRadius: 8,
           elevation: 6,
-          transform: [{ scale: popping ? 1.2 : 1 }],
+          transform: [{ scale: popping ? 1.2 : 1 }, ...(sk === 'gem' ? [{ rotate: '45deg' }, { scale: 0.78 }] : [])],
           alignItems: 'center',
         }}
       >
@@ -346,7 +379,7 @@ function Orb({ color, size, popping, worry }) {
             backgroundColor: 'rgba(255,255,255,0.55)',
           }}
         />
-        {color >= 1 && color <= 5 && (
+        {color >= 1 && color <= 5 && sk !== 'gem' && (
           <View style={{ position: 'absolute', top: size * 0.4, flexDirection: 'row' }}>
             {[0, 1].map((i) => (
               <View
@@ -420,6 +453,11 @@ function Game() {
     rings: [],
     earned: 1,
     fails: {},
+    shards: 0,
+    owned: ['gel'],
+    skin: 'gel',
+    missions: null,
+    streak: { last: '', n: 0 },
     fever: 0,
     feverUntil: 0,
     continued: false,
@@ -496,6 +534,7 @@ function Game() {
 
   const start = (L) => {
     RNG = L === 22 ? seeded(dateSeed()) : Math.random;
+    touchStreak();
     const cfg = LEVELS[L - 1];
     G.level = L;
     G.t = cfg.t;
@@ -570,6 +609,53 @@ function Game() {
     }).catch(() => {});
   };
 
+  const saveMeta = () => {
+    AsyncStorage.setItem(
+      'meta',
+      JSON.stringify({ shards: G.shards, owned: G.owned, skin: G.skin, missions: G.missions, streak: G.streak })
+    ).catch(() => {});
+  };
+  const touchStreak = () => {
+    if (!G.missions || G.missions.d !== dateKey()) {
+      G.missions = genMissions();
+      saveMeta();
+    }
+    const t = dateKey();
+    const st = G.streak;
+    if (st.last === t) return;
+    st.n = st.last === dateKey(new Date(Date.now() - 86400000)) ? st.n + 1 : 1;
+    st.last = t;
+    if (st.n === 3 || st.n === 7 || st.n % 14 === 0) G.shards += 2;
+    saveMeta();
+  };
+  const track = (k, v) => {
+    const m = G.missions;
+    if (!m || m.d !== dateKey()) return;
+    m.items.forEach((it) => {
+      if (it.k !== k || it.done) return;
+      it.have = k === 'chain' ? Math.max(it.have, v) : it.have + v;
+      if (it.have >= it.need) {
+        it.done = true;
+        G.shards += 1;
+        G.banner = 'MISSION DONE +1 ◆';
+        jingle([4, 6, 9], 70);
+      }
+    });
+    saveMeta();
+  };
+  const pickSkin = (id) => {
+    const sk = SKINS.find((x) => x.id === id);
+    if (!G.owned.includes(id)) {
+      if (G.shards < sk.cost) return;
+      G.shards -= sk.cost;
+      G.owned.push(id);
+    }
+    G.skin = id;
+    SKIN = id;
+    saveMeta();
+    render();
+  };
+
   const showAd = (cb) => {
     G.ad = { left: 3 };
     render();
@@ -578,6 +664,7 @@ function Game() {
       G.ad.left--;
       if (G.ad.left <= 0) {
         G.ad = null;
+        lastAdAt = Date.now();
         cb();
         render();
       } else {
@@ -604,12 +691,13 @@ function Game() {
       AsyncStorage.setItem('stars', JSON.stringify(G.stars)).catch(() => {});
       const after = totalStars(G.stars);
       G.hatched = ORBLINGS.find((o) => before < o.need && after >= o.need) || G.hatched;
+      track('stars', after - before);
       G.starAd = true;
     });
   const nextAction = () => {
     if (G.t === 'daily') return shareDaily();
     const nxt = G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level;
-    if (G.status === 'won' && (G.level === 6 || G.level === 9 || (G.level >= 12 && G.level % 2 === 0))) showAd(() => start(nxt));
+    if (G.status === 'won' && adDue(G.level)) showAd(() => start(nxt));
     else start(nxt);
     return null;
   };
@@ -637,6 +725,8 @@ function Game() {
     }
     const after = totalStars(G.stars);
     G.hatched = ORBLINGS.find((o) => before < o.need && after >= o.need) || null;
+    track('levels', 1);
+    track('stars', after - before);
     G.boss = G.level % 10 === 0;
     if (G.boss) {
       doShake(14);
@@ -699,6 +789,8 @@ function Game() {
       buzz(G.chain);
       playChain(G.chain, flat.length);
       if (G.chain >= 3) G.prismNext = true;
+      track('pops', flat.length);
+      track('chain', G.chain);
       if (G.chain >= 2) setTimeout(() => buzz(G.chain), 90);
       if (G.chain >= 3) doShake(Math.min(4 + G.chain * 2, 16));
       await sleep(G.chain >= 3 ? 420 : 260);
@@ -710,6 +802,7 @@ function Game() {
           G.fever = 0;
           G.feverUntil = Date.now() + 7000;
           G.banner = 'FEVER x2!';
+          track('fever', 1);
           jingle([0, 2, 4, 6, 8, 9], 60);
           doShake(12);
         }
@@ -944,6 +1037,20 @@ function Game() {
       .then((v) => {
         if (v) {
           G.daily = JSON.parse(v);
+          render();
+        }
+      })
+      .catch(() => {});
+    AsyncStorage.getItem('meta')
+      .then((v) => {
+        if (v) {
+          const m = JSON.parse(v);
+          G.shards = m.shards || 0;
+          G.owned = m.owned || ['gel'];
+          G.skin = m.skin || 'gel';
+          SKIN = G.skin;
+          G.missions = m.missions || null;
+          G.streak = m.streak || { last: '', n: 0 };
           render();
         }
       })
@@ -1218,7 +1325,7 @@ function Game() {
                       {ORBLINGS.map((o) => (totalStars(G.stars) >= o.need ? o.icon : '🥚')).join(' ')}
                     </Text>
                   </Animated.View>
-                  <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}</Text>
+                  <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}{G.streak.n ? `  •  🔥${G.streak.n}` : ''}</Text>
                   <View style={styles.grid}>
                     {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((L) => {
                       const open = L <= G.unlocked;
@@ -1239,7 +1346,7 @@ function Game() {
                       );
                     })}
                   </View>
-                  <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
                     <Pressable
                       onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
                       style={[styles.modeBtn, { borderColor: '#ffd23b' }]}
@@ -1247,6 +1354,16 @@ function Game() {
                       <Text style={styles.modeTxt}>
                         {G.daily && G.daily.d === dateKey() ? 'DAILY ✓ SHARE' : '🔥 DAILY'}
                       </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        touchStreak();
+                        G.status = 'shop';
+                        render();
+                      }}
+                      style={[styles.modeBtn, { borderColor: '#ff3bd4' }]}
+                    >
+                      <Text style={styles.modeTxt}>🎯 MISSIONS</Text>
                     </Pressable>
                     {G.stars[20] ? (
                       <Pressable onPress={() => start(21)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
@@ -1267,6 +1384,49 @@ function Game() {
                       </Text>
                     </Pressable>
                   ) : null}
+                </>
+              ) : G.status === 'shop' ? (
+                <>
+                  <Text style={styles.title}>MISSIONS</Text>
+                  <Text style={styles.hint}>
+                    🔥 {G.streak.n} day streak  •  ◆ {G.shards} shards
+                  </Text>
+                  {(G.missions ? G.missions.items : []).map((it) => (
+                    <Text
+                      key={it.k}
+                      style={[styles.hint, { color: it.done ? '#2bff88' : '#ddd', fontSize: 14, marginTop: 6 }]}
+                    >
+                      {it.done ? '✓ ' : '○ '}
+                      {it.text}  ({Math.min(it.have, it.need)}/{it.need})
+                    </Text>
+                  ))}
+                  <Text style={[styles.hint, { marginTop: 14 }]}>ORB SKINS (earned with shards)</Text>
+                  <View style={{ flexDirection: 'row', marginTop: 6 }}>
+                    {SKINS.map((sk) => (
+                      <Pressable
+                        key={sk.id}
+                        onPress={() => pickSkin(sk.id)}
+                        style={[
+                          styles.modeBtn,
+                          { marginHorizontal: 3, paddingHorizontal: 8, borderColor: G.skin === sk.id ? '#2bff88' : '#2a2a4a' },
+                        ]}
+                      >
+                        <Text style={styles.modeTxt}>{sk.name}</Text>
+                        <Text style={{ color: '#aaa', fontSize: 10, textAlign: 'center' }}>
+                          {G.owned.includes(sk.id) ? (G.skin === sk.id ? 'USING' : 'OWNED') : `◆ ${sk.cost}`}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Pressable
+                    style={{ marginTop: 18 }}
+                    onPress={() => {
+                      G.status = 'menu';
+                      render();
+                    }}
+                  >
+                    <Text style={styles.hint}>BACK</Text>
+                  </Pressable>
                 </>
               ) : (
                 <>
