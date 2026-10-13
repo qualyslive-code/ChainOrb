@@ -152,7 +152,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v12';
+const VERSION = 'v13';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -609,6 +609,99 @@ async function loadAllMusic() {
   }
 }
 
+/* ============================== ONLINE (optional) ============================== */
+// Fully optional: with the two constants below left empty, the game never touches the network.
+// Fill them in once the Supabase tables exist (see supabase_chainorb.sql).
+const SUPABASE_URL = ''; // https://YOUR-PROJECT.supabase.co
+const SUPABASE_ANON = ''; // public anon / publishable key
+const ONLINE = !!(SUPABASE_URL && SUPABASE_ANON);
+let PID = 'p' + Math.random().toString(36).slice(2, 10);
+let NICK = 'Orb' + (1000 + Math.floor(Math.random() * 9000));
+let COUNTRY = 'XX';
+try {
+  const loc = (Intl.DateTimeFormat().resolvedOptions().locale || '').split('-')[1];
+  if (loc) COUNTRY = loc.slice(0, 2).toUpperCase();
+} catch (e) {}
+let evQ = [];
+let evBusy = false;
+
+const sbHeaders = () => {
+  const h = { apikey: SUPABASE_ANON, 'Content-Type': 'application/json', Prefer: 'return=minimal' };
+  if (SUPABASE_ANON.startsWith('eyJ')) h.Authorization = 'Bearer ' + SUPABASE_ANON;
+  return h;
+};
+function fetchT(url, opts, ms = 8000) {
+  const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const t = ac ? setTimeout(() => ac.abort(), ms) : null;
+  return fetch(url, { ...opts, signal: ac ? ac.signal : undefined }).finally(() => {
+    if (t) clearTimeout(t);
+  });
+}
+async function sbPost(table, rows) {
+  const res = await fetchT(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: sbHeaders(),
+    body: JSON.stringify(rows),
+  });
+  return res.ok;
+}
+async function loadOnline() {
+  if (!ONLINE) return;
+  try {
+    const pid = await AsyncStorage.getItem('pid');
+    if (pid) PID = pid;
+    else AsyncStorage.setItem('pid', PID).catch(() => {});
+    const nick = await AsyncStorage.getItem('nick');
+    if (nick) NICK = nick;
+    else AsyncStorage.setItem('nick', NICK).catch(() => {});
+    const q = await AsyncStorage.getItem('evq');
+    if (q) evQ = JSON.parse(q) || [];
+  } catch (e) {}
+  flushEvents();
+}
+// events wait in a small offline queue and are sent whenever the network allows
+async function flushEvents() {
+  if (!ONLINE || evBusy || !evQ.length) return;
+  evBusy = true;
+  try {
+    const batch = evQ.slice(0, 50);
+    if (await sbPost('level_events', batch)) {
+      evQ.splice(0, batch.length);
+      AsyncStorage.setItem('evq', JSON.stringify(evQ)).catch(() => {});
+    }
+  } catch (e) {}
+  evBusy = false;
+}
+function queueEvent(e) {
+  if (!ONLINE) return;
+  evQ.push(e);
+  if (evQ.length > 200) evQ.shift();
+  AsyncStorage.setItem('evq', JSON.stringify(evQ)).catch(() => {});
+  flushEvents();
+}
+async function submitDaily(row) {
+  if (!ONLINE) return;
+  try {
+    await sbPost('daily_scores', [row]);
+  } catch (e) {}
+}
+async function fetchBoard(day) {
+  if (!ONLINE) return null;
+  try {
+    const res = await fetchT(
+      `${SUPABASE_URL}/rest/v1/daily_scores?day=eq.${day}&select=pid,name,score,chain,country&order=score.desc&limit=40`,
+      { headers: sbHeaders() }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    const seen = new Set();
+    return rows.filter((r) => (seen.has(r.pid) ? false : (seen.add(r.pid), true)));
+  } catch (e) {
+    return null;
+  }
+}
+const EMO = ['⬜', '🟥', '🟩', '🟦', '🟨', '🟪', '⬛', '💣', '🪨', '🌈'];
+
 /* ============================== UI PARTS ============================== */
 function Orb({ color, size, popping, worry }) {
   if (!color) return <View style={{ width: size, height: size }} />;
@@ -712,6 +805,11 @@ function Game() {
     piece: null,
     next: newPair(),
     next2: newPair(),
+    attempts: {},
+    startedAt: 0,
+    card: null,
+    cardSnap: null,
+    lb: null,
     lvlBest: {},
     newBest: false,
     pausedAt: 0,
@@ -852,6 +950,11 @@ function Game() {
     touchStreak();
     const cfg = LEVELS[L - 1];
     G.level = L;
+    G.attempts[L] = (G.attempts[L] || 0) + 1;
+    G.startedAt = Date.now();
+    G.card = null;
+    G.cardSnap = null;
+    G.lb = null;
     G.t = cfg.t;
     G.goal = cfg.g || 0;
     G.colors = cfg.c;
@@ -900,6 +1003,7 @@ function Game() {
   };
 
   const gameOver = () => {
+    logEvent('loss');
     G.fails[G.level] = (G.fails[G.level] || 0) + 1;
     if (G.t === 'daily') saveDaily();
     G.status = 'over';
@@ -914,10 +1018,57 @@ function Game() {
     render();
   };
 
+  const logEvent = (result) => {
+    if (!ONLINE) return;
+    queueEvent({
+      pid: PID,
+      level: G.level,
+      mode: G.t,
+      result,
+      attempt: G.attempts[G.level] || 1,
+      secs: Math.round((Date.now() - G.startedAt) / 1000),
+      score: G.score,
+      max_chain: G.maxChain,
+      placed: G.placed,
+      v: VERSION,
+      country: COUNTRY,
+    });
+  };
   const saveDaily = () => {
     G.daily = { d: dateKey(), s: G.score, c: G.maxChain };
     AsyncStorage.setItem('daily', JSON.stringify(G.daily)).catch(() => {});
+    if (ONLINE) {
+      submitDaily({ day: dateKey(), pid: PID, name: NICK, score: G.score, chain: G.maxChain, country: COUNTRY })
+        .then(() => fetchBoard(dateKey()))
+        .then((rows) => {
+          G.lb = rows || [];
+          render();
+        });
+    }
   };
+  const EMO_ROWS = () => {
+    const c = G.card;
+    const rows = c.grid.map((r) => r.map((v) => EMO[v] || '⬜').join(''));
+    const first = Math.max(0, c.grid.findIndex((r) => r.some(Boolean)));
+    return rows.slice(first);
+  };
+  const shareChain = () => {
+    if (!G.card) return;
+    Share.share({
+      message: `ChainOrb x${G.card.chain} CHAIN 🔥\n${EMO_ROWS().join('\n')}\nCan you beat it?`,
+    }).catch(() => {});
+  };
+  const skipLevel = () =>
+    showAd(() => {
+      logEvent('skip');
+      const nxt = G.level + 1;
+      if (nxt > G.unlocked) {
+        G.unlocked = nxt;
+        AsyncStorage.setItem('unlocked', String(G.unlocked)).catch(() => {});
+      }
+      G.fails[G.level] = 0;
+      start(nxt);
+    });
   const shareDaily = () => {
     const d = G.daily || { d: dateKey(), s: G.score, c: G.maxChain };
     Share.share({
@@ -1019,6 +1170,7 @@ function Game() {
   };
 
   const win = () => {
+    logEvent('win');
     if (G.t === 'daily') {
       saveDaily();
       G.status = 'over';
@@ -1078,6 +1230,7 @@ function Game() {
       const groups = findGroups(G.board);
       if (!groups.length) break;
       G.chain++;
+      if (G.chain === 1) G.cardSnap = G.board.map((row) => row.slice());
       const flat = groups.flat();
       const big = groups.reduce((m, g) => (g.length > m.length ? g : m), []);
       const hit = new Set(flat.map(([r, c]) => r * COLS + c));
@@ -1146,6 +1299,10 @@ function Game() {
       await sleep(110);
     }
     if (!alive.current) return;
+    if (G.cardSnap && G.chain >= 3 && G.chain > (G.card ? G.card.chain : 0)) {
+      G.card = { chain: G.chain, grid: G.cardSnap };
+    }
+    G.cardSnap = null;
     if (G.board.every((row) => row.every((v) => !v))) {
       G.score += 500;
       G.banner = 'PERFECT!';
@@ -1372,6 +1529,7 @@ function Game() {
   useEffect(() => {
     alive.current = true;
     initSound();
+    loadOnline();
     AsyncStorage.getItem('lastError')
       .then((v) => {
         if (v) {
@@ -1524,6 +1682,7 @@ function Game() {
           <Pressable
             onPress={() => {
               if (G.status === 'playing') {
+                logEvent('quit');
                 G.status = 'menu';
                 render();
               }
@@ -1702,6 +1861,7 @@ function Game() {
                   <Pressable
                     style={{ marginTop: 18 }}
                     onPress={() => {
+                      logEvent('quit');
                       G.status = 'menu';
                       render();
                     }}
@@ -1894,9 +2054,35 @@ function Game() {
                       {G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
                     </Text>
                   </Pressable>
+                  {G.t === 'daily' && ONLINE && (
+                    <View style={{ marginTop: 6, alignItems: 'center' }}>
+                      <Text style={styles.small}>TODAY'S TOP</Text>
+                      {G.lb === null ? (
+                        <Text style={styles.hint}>loading…</Text>
+                      ) : G.lb.length === 0 ? (
+                        <Text style={styles.hint}>no scores yet (or offline)</Text>
+                      ) : (
+                        G.lb.slice(0, 5).map((r, i) => (
+                          <Text key={r.pid} style={[styles.small, r.pid === PID && { color: T.accent }]}>
+                            {i + 1}. {r.name} {r.country}  {r.score}  x{r.chain}
+                          </Text>
+                        ))
+                      )}
+                    </View>
+                  )}
+                  {G.card && G.card.chain >= 4 && (
+                    <Pressable style={styles.adBtn} onPress={shareChain}>
+                      <Text style={styles.adBtnTxt}>📤 SHARE YOUR x{G.card.chain} CHAIN</Text>
+                    </Pressable>
+                  )}
                   {G.status === 'over' && !G.continued && G.t !== 'daily' && (
                     <Pressable style={styles.adBtn} onPress={continueAfterAd}>
                       <Text style={styles.adBtnTxt}>▶ WATCH AD: KEEP GOING</Text>
+                    </Pressable>
+                  )}
+                  {G.status === 'over' && (G.fails[G.level] || 0) >= 3 && G.t !== 'daily' && G.level < MAX_LEVEL && (
+                    <Pressable style={styles.adBtn} onPress={skipLevel}>
+                      <Text style={styles.adBtnTxt}>▶ WATCH AD: SKIP THIS LEVEL</Text>
                     </Pressable>
                   )}
                   {G.status === 'won' && G.earned < 3 && !G.starAd && (
