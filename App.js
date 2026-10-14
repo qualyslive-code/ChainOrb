@@ -14,7 +14,7 @@ const COLS = 6;
 const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff2255', '#00ff88', '#2299ff', '#ffcc00', '#cc44ff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
+const COLORS = ['', '#ff3355', '#2ee86b', '#2e9bff', '#ffd21a', '#c64dff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
 const GLYPHS = ['', '●', '▲', '■', '◆', '★'];
 const CHAIN_COLORS = ['','#ffd23b','#ff8a3b','#ff3b6b','#cc44ff','#ffffff','#00ffff','#00ff88'];
 const CHAIN_SIZES  = [0, 38, 44, 52, 60, 68, 76, 84]; // shapes keep colors readable for color-blind players
@@ -116,10 +116,10 @@ function findGroups(b) {
 
 /* ============================== REALMS & LEVELS ============================== */
 const REALMS = [
-  { name: 'SUNRISE MEADOW', bg: '#150c06', board: '#21130a', border: '#7a4420', accent: '#ffb347' },
-  { name: 'MOONLIT LAKE', bg: '#05121a', board: '#09202c', border: '#1d6272', accent: '#3be0c8' },
-  { name: 'FROST PEAKS', bg: '#09121f', board: '#0f1f38', border: '#4a7ab0', accent: '#9fd8ff' },
-  { name: 'NEON CITY', bg: '#0a0a14', board: '#11111f', border: '#4a2a6a', accent: '#ff3bd4' },
+  { name: 'SUNRISE MEADOW', bg: '#ff6f91', sky: ['#ffb36b', '#ff6f91', '#7b4bd6'], board: 'rgba(40,10,60,0.50)', border: '#ffd36b', accent: '#ffd36b' },
+  { name: 'MOONLIT LAKE', bg: '#2a7fd4', sky: ['#35d0c4', '#2a7fd4', '#3b3fb5'], board: 'rgba(5,20,70,0.50)', border: '#7ff3e0', accent: '#7ff3e0' },
+  { name: 'FROST PEAKS', bg: '#5aa2f0', sky: ['#a8e0ff', '#5aa2f0', '#4a5fd0'], board: 'rgba(10,25,80,0.45)', border: '#e6f6ff', accent: '#ffffff' },
+  { name: 'NEON CITY', bg: '#8a3bff', sky: ['#ff4fd8', '#8a3bff', '#2a1a7a'], board: 'rgba(15,5,50,0.55)', border: '#ff9bec', accent: '#ff9bec' },
 ];
 const realmOf = (L) => Math.min(3, Math.floor((L - 1) / 5));
 // t: score | chain | rocks | pairs.  g goal, c colors, s speed ms, m move limit,
@@ -744,11 +744,12 @@ function Orb({ color, size, popping, worry, active }) {
           flex: 1,
           borderRadius: sk === 'gem' ? size * 0.2 : size,
           backgroundColor: popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : COLORS[color],
-          borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? size * 0.14 : sk === 'candy' ? 3 : 0,
-          borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color] : sk === 'candy' ? 'rgba(255,255,255,0.75)' : '#ff8a3b',
-          shadowColor: COLORS[color],
-          shadowOpacity: active ? 1 : 0.7,
-          shadowRadius: active ? 14 : 6,
+          borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? size * 0.14 : sk === 'candy' ? 3 : size * 0.05,
+          borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color] : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : 'rgba(0,0,0,0.35)',
+          shadowColor: active ? COLORS[color] : '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: active ? 1 : 0.5,
+          shadowRadius: active ? 14 : 4,
           elevation: active ? 12 : 5,
           transform: [{ scale: popping ? 1.2 : 1 }, ...(sk === 'gem' ? [{ rotate: '45deg' }, { scale: 0.78 }] : [])],
           alignItems: 'center',
@@ -757,12 +758,23 @@ function Orb({ color, size, popping, worry, active }) {
         <View
           style={{
             position: 'absolute',
-            top: size * 0.1,
-            left: size * 0.18,
-            width: size * 0.3,
-            height: size * 0.15,
+            bottom: size * 0.07,
+            left: size * 0.12,
+            right: size * 0.12,
+            height: size * 0.3,
             borderRadius: size,
-            backgroundColor: 'rgba(255,255,255,0.65)',
+            backgroundColor: 'rgba(0,0,0,0.14)',
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            top: size * 0.08,
+            left: size * 0.16,
+            width: size * 0.38,
+            height: size * 0.18,
+            borderRadius: size,
+            backgroundColor: 'rgba(255,255,255,0.85)',
             transform: [{ rotate: '-20deg' }],
           }}
         />
@@ -1780,7 +1792,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 120) / COLS), Math.floor((height - 390) / ROWS))
+    Math.min(Math.floor((width - 66) / COLS), Math.floor((height - 262) / ROWS))
   );
 
   G.cell = cell;
@@ -1835,6 +1847,22 @@ function Game() {
   return (
     <View style={[styles.root, { backgroundColor: T.bg }]}>
       <StatusBar barStyle="light-content" />
+      <View pointerEvents="none" style={ABS_FILL}>
+        {T.sky.map((c, i) => (
+          <View key={i} style={{ flex: 1, backgroundColor: c }} />
+        ))}
+        {[
+          { l: '-10%', t: '8%', z: 180, o: 0.10 },
+          { l: '60%', t: '30%', z: 140, o: 0.09 },
+          { l: '15%', t: '62%', z: 220, o: 0.08 },
+          { l: '70%', t: '80%', z: 120, o: 0.10 },
+        ].map((d, i) => (
+          <View
+            key={i}
+            style={{ position: 'absolute', left: d.l, top: d.t, width: d.z, height: d.z, borderRadius: d.z, backgroundColor: '#fff', opacity: d.o }}
+          />
+        ))}
+      </View>
 
       <View style={styles.hud}>
         <View>
@@ -1926,7 +1954,7 @@ function Game() {
         />
       </View>
 
-      <Text style={[styles.coach, { color: T.accent }]}>
+      <Text style={[styles.coach, { color: '#fff', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 }]}>
         {G.status === 'menu' ? T.name : G.coach || T.name}
       </Text>
 
@@ -2185,7 +2213,7 @@ function Game() {
                           key={L}
                           disabled={!open}
                           onPress={() => start(L)}
-                          style={[styles.lvl, open && { borderColor: REALMS[realmOf(L)].accent }, !open && styles.lvlLocked]}
+                          style={[styles.lvl, open && { borderColor: '#fff', backgroundColor: REALMS[realmOf(L)].sky[1] }, !open && styles.lvlLocked]}
                         >
                           <Text style={styles.lvlTxt}>{open ? L : '🔒'}</Text>
                           {open ? (
@@ -2374,17 +2402,17 @@ function Game() {
         <View style={{ width: 46 }} />
       </View>
 
-      <View style={styles.controls}>
-        <View style={styles.row}>
-          <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} />
-          <HoldButton dim={G.status !== 'playing'} label="⟳" onPress={() => rotate(1)} />
-          <HoldButton dim={G.status !== 'playing'} label="DROP" onPress={hardDrop} style={styles.dropBtn} textStyle={styles.dropTxt} />
+      <View pointerEvents="box-none" style={styles.floatL}>
+        <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={styles.fbtn} />
+        <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={styles.fbtn} />
+        <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={styles.fbtn} />
+      </View>
+      <View pointerEvents="box-none" style={styles.floatR}>
+        <View style={{ flexDirection: 'row' }}>
+          <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} style={styles.fbtn} />
+          <HoldButton dim={G.status !== 'playing'} label="⟳" onPress={() => rotate(1)} style={styles.fbtn} />
         </View>
-        <View style={styles.row}>
-          <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat />
-          <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat />
-          <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat />
-        </View>
+        <HoldButton dim={G.status !== 'playing'} label="DROP" onPress={hardDrop} style={styles.fdrop} textStyle={styles.dropTxt} />
       </View>
       {G.ad && (
         <View style={styles.adCover}>
@@ -2412,22 +2440,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 8,
   },
-  label: { color: '#6b6b8a', fontSize: 11, letterSpacing: 2 },
-  score: { color: '#fff', fontSize: 28, fontWeight: '800' },
-  small: { color: '#6b6b8a', fontSize: 12 },
+  label: { color: 'rgba(255,255,255,0.9)', fontSize: 11, letterSpacing: 2, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.45)', textShadowRadius: 3 },
+  score: { color: '#fff', fontSize: 30, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 5 },
+  small: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.45)', textShadowRadius: 3 },
   board: {
-    backgroundColor: '#11111f',
-    borderColor: '#2a2a4a',
-    borderWidth: 2,
-    borderRadius: 10,
+    backgroundColor: 'rgba(15,10,50,0.5)',
+    borderColor: '#ffffff',
+    borderWidth: 3,
+    borderRadius: 16,
     padding: 2,
   },
   overlay: {
     ...ABS_FILL,
-    backgroundColor: 'rgba(5,5,12,0.88)',
+    backgroundColor: 'rgba(30,15,80,0.84)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 10,
+    borderRadius: 14,
   },
   title: { color: '#fff', textShadowColor: '#2bff88', textShadowRadius: 16, fontSize: 28, fontWeight: '900', letterSpacing: 4 },
   overScore: { color: '#aaa', marginTop: 8, fontSize: 15 },
@@ -2439,7 +2467,7 @@ const styles = StyleSheet.create({
     borderRadius: 40,
   },
   playTxt: { color: '#04140b', fontSize: 20, fontWeight: '900', letterSpacing: 2 },
-  hint: { color: '#6b6b8a', marginTop: 16, fontSize: 12 },
+  hint: { color: 'rgba(255,255,255,0.85)', marginTop: 16, fontSize: 12 },
   bannerWrap: {
     ...ABS_FILL,
     alignItems: 'center',
@@ -2452,9 +2480,9 @@ const styles = StyleSheet.create({
     textShadowColor: '#ff3b6b',
     textShadowRadius: 14,
   },
-  chip: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: '#14142a' },
+  chip: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: 'rgba(0,0,0,0.35)' },
   hatch: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 8, letterSpacing: 1 },
-  modeBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, borderWidth: 1.5, marginHorizontal: 5, backgroundColor: '#14142a' },
+  modeBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 16, borderWidth: 2.5, marginHorizontal: 5, marginVertical: 3, backgroundColor: 'rgba(255,255,255,0.16)' },
   modeTxt: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
   adBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#ffd23b', backgroundColor: '#1a1a30' },
   adBtnTxt: { color: '#ffd23b', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
@@ -2462,14 +2490,14 @@ const styles = StyleSheet.create({
   adTxt: { color: '#aaa', fontSize: 14, letterSpacing: 3 },
   adBig: { color: '#fff', fontSize: 64, fontWeight: '900' },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
-  bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
+  bar: { width: '90%', height: 6, backgroundColor: 'rgba(0,0,0,0.30)', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '100%', marginTop: 10 },
-  lvl: { width: 36, height: 42, margin: 3, borderRadius: 10, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
-  lvlLocked: { borderColor: '#2a2a4a', opacity: 0.5 },
-  stars: { color: '#ffd23b', fontSize: 9, marginTop: 2 },
+  lvl: { width: 44, height: 50, margin: 3, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  lvlLocked: { borderColor: 'rgba(255,255,255,0.25)', opacity: 0.7 },
+  stars: { color: '#ffe14a', fontSize: 9, marginTop: 2 },
   bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
-  lvlTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  lvlTxt: { color: '#fff', fontSize: 17, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 3 },
   controls: { width: '94%', marginTop: 10 },
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
@@ -2490,6 +2518,10 @@ const styles = StyleSheet.create({
   btnTxt: { color: '#fff', fontSize: 26, fontWeight: '700' },
   dropBtn: { backgroundColor: 'rgba(255,59,107,0.20)', borderColor: '#ff3b6b', borderTopColor: '#ff7a9a' },
   dropTxt: { fontSize: 20, fontWeight: '900', letterSpacing: 2 },
+  floatL: { position: 'absolute', left: 8, bottom: 12, flexDirection: 'row', alignItems: 'center' },
+  floatR: { position: 'absolute', right: 8, bottom: 12, alignItems: 'flex-end' },
+  fbtn: { flex: 0, width: 50, height: 50, marginHorizontal: 3, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.24)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)' },
+  fdrop: { flex: 0, width: 76, height: 76, marginHorizontal: 3, marginTop: 6, borderRadius: 38, backgroundColor: 'rgba(255,59,107,0.65)', borderWidth: 2, borderColor: '#ffd0dc' },
 });
 
 
