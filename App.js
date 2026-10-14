@@ -63,6 +63,23 @@ function tryRotate(board, p, dir) {
   return null;
 }
 
+// render-only: how far each orb will fall (keyed by destination cell). never touches the engine
+function fallMap(b) {
+  const m = new Map();
+  let max = 0;
+  for (let c = 0; c < COLS; c++) {
+    let w = ROWS - 1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+      if (b[r][c]) {
+        if (r !== w) { m.set(w * COLS + c, w - r); max = Math.max(max, w - r); }
+        w--;
+      }
+    }
+  }
+  return { m, max };
+}
+const fallMs = (d) => Math.min(280, 80 + 45 * d);
+
 // every orb falls to rest. returns true if anything moved
 function gravity(b) {
   let moved = false;
@@ -734,6 +751,24 @@ async function fetchBoard(day) {
 const EMO = ['⬜', '🟥', '🟩', '🟦', '🟨', '🟪', '⬛', '💣', '🪨', '🌈'];
 
 /* ============================== UI PARTS ============================== */
+// drawn position is separate from the logical one: slides in from above, then squashes on landing
+function Fall({ dist, cell, children }) {
+  const y = useRef(new Animated.Value(-dist * cell)).current;
+  const sq = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(y, { toValue: 0, duration: fallMs(dist), easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(sq, { toValue: 0.82, duration: 45, useNativeDriver: true }),
+      Animated.spring(sq, { toValue: 1, friction: 4, tension: 260, useNativeDriver: true }),
+    ]).start();
+  }, []);
+  return (
+    <Animated.View style={{ width: cell, height: cell, transform: [{ translateY: y }, { translateY: sq.interpolate({ inputRange: [0.82, 1], outputRange: [cell * 0.09, 0] }) }, { scaleY: sq }, { scaleX: sq.interpolate({ inputRange: [0.82, 1], outputRange: [1.1, 1] }) }] }}>
+      {children}
+    </Animated.View>
+  );
+}
+
 function Orb({ color, size, popping, worry, active }) {
   if (!color) return <View style={{ width: size, height: size }} />;
   const sk = color >= 1 && color <= 5 ? SKIN : 'gel';
@@ -827,6 +862,9 @@ function Orb({ color, size, popping, worry, active }) {
             ))}
           </View>
         )}
+        {popping && color >= 1 && color <= 5 && !gemLike && (
+          <View style={{ position: 'absolute', top: size * 0.5, width: size * 0.3, height: size * 0.16, borderBottomLeftRadius: size, borderBottomRightRadius: size, borderWidth: size * 0.04, borderTopWidth: 0, borderColor: '#14142a', backgroundColor: 'rgba(255,120,140,0.9)' }} />
+        )}
         {color >= 1 && color <= 5 && (
           <Text
             style={{
@@ -900,6 +938,47 @@ function Scene({ realm, width, height }) {
       ))}
     </>
   );
+}
+
+function Confetti({ w = 320, h = 520, n = 26 }) {
+  const t = useRef(new Animated.Value(0)).current;
+  const P = useRef(Array.from({ length: n }, (_, i) => ({
+    x: Math.random() * w, d: Math.random() * 0.35, s: 6 + Math.random() * 6,
+    sw: (Math.random() - 0.5) * 70, rot: 2 + Math.random() * 4,
+    col: ['#ff4d6d', '#ffd23b', '#3bd6ff', '#7dff6b', '#c46bff'][i % 5],
+  }))).current;
+  useEffect(() => {
+    Animated.timing(t, { toValue: 1, duration: 2600, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }, []);
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: w, height: h, overflow: 'hidden' }}>
+      {P.map((p, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            position: 'absolute', left: p.x, top: -20, width: p.s, height: p.s * 0.5, backgroundColor: p.col,
+            opacity: t.interpolate({ inputRange: [0, p.d, p.d + 0.05, 0.85, 1], outputRange: [0, 0, 1, 1, 0] }),
+            transform: [
+              { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [0, h + 40] }) },
+              { translateX: t.interpolate({ inputRange: [0, 1], outputRange: [0, p.sw] }) },
+              { rotate: t.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${p.rot * 360}deg`] }) },
+            ],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+function CountUp({ to, style }) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    const a = new Animated.Value(0);
+    const id = a.addListener(({ value }) => setV(Math.round(value)));
+    Animated.timing(a, { toValue: to, duration: Math.min(1400, 400 + to / 4), easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+    return () => a.removeListener(id);
+  }, [to]);
+  return <Text style={style}>{v}</Text>;
 }
 
 function StarReveal({ filled, delay, size }) {
@@ -1508,9 +1587,13 @@ function Game() {
     const feverAtLock = G.feverPcs > 0;
     render();
     while (alive.current) {
+      const fm = fallMap(G.board);
       if (gravity(G.board)) {
+        G.fall = fm.m;
+        G.fallId = (G.fallId || 0) + 1;
         render();
-        await sleep(130);
+        await sleep(Math.max(130, fallMs(fm.max) + 110));
+        G.fall = null;
       }
       const groups = findGroups(G.board);
       if (!groups.length) break;
@@ -1633,9 +1716,13 @@ function Game() {
       const rc = Math.floor(RNG() * COLS);
       if (!G.board[0][rc]) {
         G.board[0][rc] = ROCK;
+        const fm2 = fallMap(G.board);
         gravity(G.board);
+        G.fall = fm2.m;
+        G.fallId = (G.fallId || 0) + 1;
         render();
-        await sleep(150);
+        await sleep(Math.max(150, fallMs(fm2.max) + 110));
+        G.fall = null;
       }
     }
     const p = spawn(G.next);
@@ -1944,6 +2031,21 @@ function Game() {
   useEffect(() => {
     setMusicRate(tense ? 1.15 : 1);
   }, [tense]);
+  const cdRef = useRef(0);
+  useEffect(() => {
+    if (G.status !== 'playing' || G.placed !== 0 || G.log || cdRef.current === G.startedAt) return;
+    const my = G.startedAt;
+    cdRef.current = my;
+    G.status = 'resolving';
+    G.cd = 3;
+    render();
+    const iv = setInterval(() => {
+      if (G.startedAt !== my || !alive.current || G.status !== 'resolving') { G.cd = 0; clearInterval(iv); render(); return; }
+      G.cd--;
+      if (G.cd <= 0) { G.cd = 0; G.status = 'playing'; clearInterval(iv); buzz(1); }
+      render();
+    }, 550);
+  }, [G.startedAt, G.status]);
   const paused = G.status === 'paused';
   useEffect(() => {
     musHold = paused;
@@ -2122,15 +2224,27 @@ function Game() {
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: G.feverPcs > 0 ? '#ffd23b' : T.border }]}>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
-              {row.map((col, c) => (
-                <Orb
-                  key={c}
-                  color={col}
-                  size={cell}
-                  popping={G.popping.has(r * COLS + c)}
-                  worry={danger}
-                />
-              ))}
+              {row.map((col, c) => {
+                const fd = G.fall && col ? G.fall.get(r * COLS + c) : 0;
+                const orb = (
+                  <Orb
+                    color={col}
+                    size={cell}
+                    popping={G.popping.has(r * COLS + c)}
+                    worry={danger}
+                  />
+                );
+                return fd ? (
+                  <Fall key={`f${c}-${G.fallId}`} dist={fd} cell={cell}>{orb}</Fall>
+                ) : (
+                  <Animated.View
+                    key={c}
+                    style={{ width: cell, height: cell, transform: col && !G.popping.has(r * COLS + c) ? [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, cell * 0.02] }) }, { scaleY: float.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] }) }] : [] }}
+                  >
+                    {orb}
+                  </Animated.View>
+                );
+              })}
             </View>
           ))}
 
@@ -2230,6 +2344,38 @@ function Game() {
           {(G.popups || []).map((o) => (
             <ScorePopup key={o.id} r={o.r} c={o.c} pts={o.pts} cell={cell} color={COLORS[G.board[Math.round(o.r)] && G.board[Math.round(o.r)][Math.round(o.c)] || 1]} />
           ))}
+
+          {G.cd > 0 && (
+            <View pointerEvents="none" style={[ABS_FILL, { alignItems: 'center', justifyContent: 'center' }]}>
+              <Text style={{ fontSize: 96, fontWeight: '900', color: '#fff', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 12 }}>{G.cd}</Text>
+            </View>
+          )}
+
+          {G.rings.slice(0, 16).map((o) => [0, 1, 2, 3, 4].map((i) => {
+            const a = (i / 5) * Math.PI * 2 + (o.r * 7 + o.c * 3) * 0.5;
+            const d = cell * (0.9 + (i % 2) * 0.35);
+            return (
+              <Animated.View
+                key={`pt${o.r}-${o.c}-${i}`}
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  left: 2 + o.c * cell + cell * 0.4,
+                  top: 2 + o.r * cell + cell * 0.4,
+                  width: cell * 0.2,
+                  height: cell * 0.2,
+                  borderRadius: cell,
+                  backgroundColor: COLORS[o.col],
+                  opacity: burst.interpolate({ inputRange: [0, 0.7, 1], outputRange: [1, 0.9, 0] }),
+                  transform: [
+                    { translateX: burst.interpolate({ inputRange: [0, 1], outputRange: [0, Math.cos(a) * d] }) },
+                    { translateY: burst.interpolate({ inputRange: [0, 1], outputRange: [0, Math.sin(a) * d + cell * 0.3] }) },
+                    { scale: burst.interpolate({ inputRange: [0, 1], outputRange: [1, 0.3] }) },
+                  ],
+                }}
+              />
+            );
+          }))}
 
           {G.rings.map((o) => (
             <Animated.View
@@ -2458,6 +2604,7 @@ function Game() {
                       ? 'DAILY CHAIN'
                       : 'GAME OVER'}
                   </Text>
+                  {G.status === 'won' && <Confetti w={width} h={height} />}
                   {G.status === 'won' && (
                     <View style={{ flexDirection: 'row', marginTop: 8 }}>
                       {[1, 2, 3].map((i) => (
@@ -2481,8 +2628,9 @@ function Game() {
                     </Text>
                   )}
                   <Text style={styles.overScore}>
+                    {G.status === 'won' && <CountUp to={G.score} style={styles.overScore} />}
                     {G.status === 'won' || G.t === 'endless' || G.t === 'daily'
-                      ? `${G.score} pts${G.status === 'won' && G.t !== 'daily' ? (G.newBest ? ' • NEW BEST!' : ` • best ${G.lvlBest[G.level] || 0}`) : ''}`
+                      ? `${G.status === 'won' ? '' : G.score} pts${G.status === 'won' && G.t !== 'daily' ? (G.newBest ? ' • NEW BEST!' : ` • best ${G.lvlBest[G.level] || 0}`) : ''}`
                       : `${Math.min(99, Math.round(progress() * 100))}% there`}
                     {'  •  '}best chain x{G.maxChain}
                   </Text>
