@@ -14,7 +14,7 @@ const COLS = 6;
 const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3b6b', '#2bff88', '#3ba8ff', '#ffd23b', '#b46bff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
+const COLORS = ['', '#ff2255', '#00ff88', '#2299ff', '#ffcc00', '#cc44ff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
 const GLYPHS = ['', '●', '▲', '■', '◆', '★']; // shapes keep colors readable for color-blind players
 const ROCK = 6;
 const BOMB = 7;
@@ -153,7 +153,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v14';
+const VERSION = 'v15';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -704,7 +704,7 @@ async function fetchBoard(day) {
 const EMO = ['⬜', '🟥', '🟩', '🟦', '🟨', '🟪', '⬛', '💣', '🪨', '🌈'];
 
 /* ============================== UI PARTS ============================== */
-function Orb({ color, size, popping, worry }) {
+function Orb({ color, size, popping, worry, active }) {
   if (!color) return <View style={{ width: size, height: size }} />;
   const sk = color >= 1 && color <= 5 ? SKIN : 'gel';
   return (
@@ -717,20 +717,47 @@ function Orb({ color, size, popping, worry }) {
           borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? size * 0.14 : sk === 'candy' ? 3 : 0,
           borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color] : sk === 'candy' ? 'rgba(255,255,255,0.75)' : '#ff8a3b',
           shadowColor: COLORS[color],
-          shadowOpacity: 1,
-          shadowRadius: 8,
-          elevation: 6,
+          shadowOpacity: active ? 1 : 0.7,
+          shadowRadius: active ? 14 : 6,
+          elevation: active ? 12 : 5,
           transform: [{ scale: popping ? 1.2 : 1 }, ...(sk === 'gem' ? [{ rotate: '45deg' }, { scale: 0.78 }] : [])],
           alignItems: 'center',
         }}
       >
         <View
           style={{
-            marginTop: size * 0.12,
-            width: size * 0.28,
-            height: size * 0.14,
+            position: 'absolute',
+            top: size * 0.1,
+            left: size * 0.18,
+            width: size * 0.3,
+            height: size * 0.15,
             borderRadius: size,
-            backgroundColor: 'rgba(255,255,255,0.55)',
+            backgroundColor: 'rgba(255,255,255,0.65)',
+            transform: [{ rotate: '-20deg' }],
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            bottom: size * 0.14,
+            right: size * 0.16,
+            width: size * 0.14,
+            height: size * 0.08,
+            borderRadius: size,
+            backgroundColor: 'rgba(255,255,255,0.28)',
+            transform: [{ rotate: '-20deg' }],
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            top: size * 0.06,
+            left: size * 0.06,
+            right: size * 0.06,
+            bottom: size * 0.06,
+            borderRadius: size,
+            borderWidth: size * 0.07,
+            borderColor: 'rgba(0,0,0,0.12)',
           }}
         />
         {color >= 1 && color <= 5 && sk !== 'gem' && (
@@ -766,6 +793,42 @@ function Orb({ color, size, popping, worry }) {
         )}
       </View>
     </View>
+  );
+}
+
+function ScorePopup({ r, c, pts, cell }) {
+  const y = useRef(new Animated.Value(0)).current;
+  const op = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(y, { toValue: -cell * 1.8, duration: 900, useNativeDriver: true }),
+      Animated.sequence([
+        Animated.delay(300),
+        Animated.timing(op, { toValue: 0, duration: 600, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, []);
+  return (
+    <Animated.Text
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        left: 2 + c * cell,
+        top: 2 + r * cell,
+        width: cell * 1.6,
+        textAlign: 'center',
+        color: '#ffd23b',
+        fontSize: cell * 0.36,
+        fontWeight: '900',
+        textShadowColor: '#ff8a3b',
+        textShadowRadius: 6,
+        opacity: op,
+        transform: [{ translateY: y }],
+        zIndex: 99,
+      }}
+    >
+      +{pts}
+    </Animated.Text>
   );
 }
 
@@ -830,6 +893,7 @@ function Game() {
     moves: 0,
     stars: {},
     rings: [],
+    popups: [],
     earned: 1,
     fails: {},
     shards: 0,
@@ -1278,7 +1342,11 @@ function Game() {
       if (G.chain >= 4) doPunch();
       // slow-mo: the cascade ripples out slower from chain 3 up
       await sleep(G.chain >= 3 ? 520 : 260);
-      G.score += flat.length * 10 * Math.pow(2, G.chain - 1) * (Date.now() < G.feverUntil ? 2 : 1);
+      const pts = flat.length * 10 * Math.pow(2, G.chain - 1) * (Date.now() < G.feverUntil ? 2 : 1);
+      G.score += pts;
+      const centR = flat.reduce((a,x)=>a+x[0],0)/flat.length;
+      const centC = flat.reduce((a,x)=>a+x[1],0)/flat.length;
+      G.popups = [...(G.popups||[]).slice(-5), { id: Date.now()+Math.random(), r: centR, c: centC, pts }];
       if (Date.now() >= G.feverUntil) {
         G.fever += flat.length * 4;
         if (G.fever >= 100) {
@@ -1621,7 +1689,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 16) / COLS), Math.floor((height - 320) / ROWS))
+    Math.min(Math.floor((width - 120) / COLS), Math.floor((height - 390) / ROWS))
   );
 
   G.cell = cell;
@@ -1655,11 +1723,18 @@ function Game() {
       <StatusBar barStyle="light-content" />
 
       <View style={styles.hud}>
-        <View style={{flex:1}}>
-          <Text style={styles.hudScore}>{G.score}</Text>
-          <Text style={[styles.small,{color:T.accent}]}>{goalText()}{G.moves?`  ${Math.max(0,G.moves-G.placed)}mv`:''}</Text>
+        <View>
+          <Text style={styles.label}>SCORE</Text>
+          <Text style={styles.score}>{G.score}</Text>
+          <Text style={styles.small}>{goalText()}</Text>
+          {G.moves ? (
+            <Text style={[styles.small, { color: '#ffd23b' }]}>
+              {Math.max(0, G.moves - G.placed)} MOVES
+            </Text>
+          ) : null}
         </View>
         <View style={{ alignItems: 'center' }}>
+          <Text style={styles.label}>NEXT</Text>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View>
               <Orb color={G.next.b} size={26} />
@@ -1672,12 +1747,22 @@ function Game() {
           </View>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.hudScore}>LV{G.level}</Text>
-          <View style={{flexDirection:'row',gap:8,marginTop:2}}>
-            <Pressable hitSlop={10} onPress={pause}><Text style={styles.iconBtn}>{G.status==='paused'?'▶':'⏸'}</Text></Pressable>
-            <Pressable hitSlop={10} onPress={()=>{MUTED=!MUTED;AsyncStorage.setItem('muted',MUTED?'1':'0').catch(()=>{});render();}}><Text style={styles.iconBtn}>{MUTED?'🔇':'🔊'}</Text></Pressable>
-            <Pressable hitSlop={10} onPress={()=>{if(G.status==='playing'){logEvent('quit');G.status='menu';render();}}}><Text style={styles.iconBtn}>☰</Text></Pressable>
-          </View>
+          <Text style={styles.label}>LEVEL</Text>
+          <Text style={styles.score}>{G.level}</Text>
+          <Pressable
+            onPress={() => {
+              if (G.status === 'playing') {
+                logEvent('quit');
+                G.status = 'menu';
+                render();
+              }
+            }}
+          >
+            <Text style={styles.small}>☰ MENU</Text>
+          </Pressable>
+          <Pressable hitSlop={10} onPress={pause}>
+            <Text style={styles.small}>⏸ PAUSE</Text>
+          </Pressable>
           {/* RESTART_BTN */}
           {(G.status === 'playing' || G.status === 'paused') && (
             <Pressable
@@ -1700,6 +1785,16 @@ function Game() {
               </Text>
             </Pressable>
           )}
+          <Pressable
+            hitSlop={10}
+            onPress={() => {
+              MUTED = !MUTED;
+              AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
+              render();
+            }}
+          >
+            <Text style={styles.small}>{MUTED ? '🔇 SOUND' : '🔊 SOUND'}</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -1721,6 +1816,26 @@ function Game() {
         {G.status === 'menu' ? T.name : G.coach || T.name}
       </Text>
 
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+        <View style={{ width: 46, alignItems: 'center', paddingTop: 6 }}>
+          {ORBLINGS.map((o) => {
+            const owned = totalStars(G.stars) >= o.need;
+            const spent = G.used[o.id];
+            return (
+              <Pressable
+                key={o.id}
+                disabled={!owned || !!spent || G.status !== 'playing'}
+                onPress={() => usePower(o.id)}
+                style={[
+                  styles.chip,
+                  { borderColor: owned ? T.accent : '#2a2a4a', opacity: owned && !spent ? 1 : 0.35 },
+                ]}
+              >
+                <Text style={{ fontSize: 20 }}>{owned ? o.icon : '🥚'}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: Date.now() < G.feverUntil ? '#ffd23b' : T.border }]}>
           {display.map((row, r) => (
@@ -1735,6 +1850,13 @@ function Game() {
                 />
               ))}
             </View>
+          ))}
+
+          {Array.from({ length: ROWS - 1 }, (_, i) => (
+            <View key={`hr${i}`} pointerEvents="none" style={{ position: 'absolute', left: 2, right: 2, top: 2 + (i + 1) * cell, height: 1, backgroundColor: 'rgba(255,255,255,0.04)' }} />
+          ))}
+          {Array.from({ length: COLS - 1 }, (_, i) => (
+            <View key={`vc${i}`} pointerEvents="none" style={{ position: 'absolute', top: 2, bottom: 2, left: 2 + (i + 1) * cell, width: 1, backgroundColor: 'rgba(255,255,255,0.04)' }} />
           ))}
 
           {ghost.map(([r, c, col]) => (
@@ -1778,7 +1900,7 @@ function Game() {
               {cellsOf(G.piece).map(([r, c, col], k) =>
                 r >= 0 && r < ROWS && c >= 0 && c < COLS ? (
                   <View key={k} style={{ position: 'absolute', left: 2 + c * cell, top: 2 + r * cell }}>
-                    <Orb color={col} size={cell} worry={danger} />
+                    <Orb color={col} size={cell} worry={danger} active />
                   </View>
                 ) : null
               )}
@@ -1799,6 +1921,10 @@ function Game() {
               ]}
             />
           )}
+
+          {(G.popups || []).map((o) => (
+            <ScorePopup key={o.id} r={o.r} c={o.c} pts={o.pts} cell={cell} color={COLORS[G.board[Math.round(o.r)] && G.board[Math.round(o.r)][Math.round(o.c)] || 1]} />
+          ))}
 
           {G.rings.map((o) => (
             <Animated.View
@@ -2076,20 +2202,9 @@ function Game() {
           )}
         </View>
       </Animated.View>
-
-      <View style={styles.orbStrip}>
-        {ORBLINGS.map((o)=>{
-          const owned=totalStars(G.stars)>=o.need;
-          const spent=G.used[o.id];
-          return(
-            <Pressable key={o.id} disabled={!owned||!!spent||G.status!=='playing'} onPress={()=>usePower(o.id)}
-              style={[styles.orbChip,{borderColor:owned?T.accent:'#2a2a4a',opacity:owned&&!spent?1:0.3}]}>
-              <Text style={{fontSize:17}}>{owned?o.icon:'🥚'}</Text>
-              {owned&&!spent&&<Text style={{color:T.accent,fontSize:7,marginTop:1}}>{o.power.split(' ')[0].toUpperCase()}</Text>}
-            </Pressable>
-          );
-        })}
+        <View style={{ width: 46 }} />
       </View>
+
       <View style={styles.controls}>
         <View style={styles.row}>
           <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} />
@@ -2121,9 +2236,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: (StatusBar.currentHeight || 24) + 6,
   },
-  hud: { width:'100%', flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:10, marginBottom:4 },
-  hudScore: { color:'#fff', fontSize:22, fontWeight:'900' },
-  iconBtn: { color:'#8888aa', fontSize:15 },
+  hud: {
+    width: '90%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
   label: { color: '#6b6b8a', fontSize: 11, letterSpacing: 2 },
   score: { color: '#fff', fontSize: 28, fontWeight: '800' },
   small: { color: '#6b6b8a', fontSize: 12 },
@@ -2174,9 +2293,7 @@ const styles = StyleSheet.create({
   adTxt: { color: '#aaa', fontSize: 14, letterSpacing: 3 },
   adBig: { color: '#fff', fontSize: 64, fontWeight: '900' },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
-  orbStrip: { flexDirection:'row', justifyContent:'space-evenly', width:'100%', paddingHorizontal:4, marginVertical:4 },
-  orbChip: { alignItems:'center', paddingHorizontal:8, paddingVertical:3, borderRadius:12, borderWidth:1.5, backgroundColor:'#14142a' },
-  bar: { width: '100%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
+  bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '100%', marginTop: 10 },
   lvl: { width: 36, height: 42, margin: 3, borderRadius: 10, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
@@ -2184,11 +2301,11 @@ const styles = StyleSheet.create({
   stars: { color: '#ffd23b', fontSize: 9, marginTop: 2 },
   bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
   lvlTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  controls: { width:'100%', marginTop:2 },
+  controls: { width: '94%', marginTop: 10 },
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
     flex: 1,
-    height: 52,
+    height: 64,
     marginHorizontal: 5,
     backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 22,
