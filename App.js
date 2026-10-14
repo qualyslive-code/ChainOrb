@@ -15,7 +15,9 @@ const ROWS = 12;
 const MAX_LEVEL = 20;
 const MIN_GROUP = 4;
 const COLORS = ['', '#ff2255', '#00ff88', '#2299ff', '#ffcc00', '#cc44ff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
-const GLYPHS = ['', '●', '▲', '■', '◆', '★']; // shapes keep colors readable for color-blind players
+const GLYPHS = ['', '●', '▲', '■', '◆', '★'];
+const CHAIN_COLORS = ['','#ffd23b','#ff8a3b','#ff3b6b','#cc44ff','#ffffff','#00ffff','#00ff88'];
+const CHAIN_SIZES  = [0, 38, 44, 52, 60, 68, 76, 84]; // shapes keep colors readable for color-blind players
 const ROCK = 6;
 const BOMB = 7;
 const CRACK = 8;
@@ -153,7 +155,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v15';
+const VERSION = 'v16';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -796,6 +798,30 @@ function Orb({ color, size, popping, worry, active }) {
   );
 }
 
+function StarReveal({ filled, delay, size }) {
+  const sc = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.spring(sc, { toValue: 1, friction: 3, tension: 200, useNativeDriver: true }).start();
+    }, delay);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <Animated.Text
+      style={{
+        fontSize: size,
+        color: filled ? '#ffd23b' : '#2a2a4a',
+        textShadowColor: filled ? '#ff8a3b' : 'transparent',
+        textShadowRadius: filled ? 10 : 0,
+        transform: [{ scale: sc }],
+        marginHorizontal: 4,
+      }}
+    >
+      ★
+    </Animated.Text>
+  );
+}
+
 function ScorePopup({ r, c, pts, cell }) {
   const y = useRef(new Animated.Value(0)).current;
   const op = useRef(new Animated.Value(1)).current;
@@ -928,6 +954,7 @@ function Game() {
   const flash = useRef(new Animated.Value(0)).current;
   const punch = useRef(new Animated.Value(1)).current;
   const fallY = useRef(new Animated.Value(0)).current;
+  const bannerScale = useRef(new Animated.Value(0)).current;
   const np = () => {
     if (G.seq && G.seq.length) {
       const q = G.seq.shift();
@@ -1171,6 +1198,8 @@ function Game() {
         it.done = true;
         G.shards += 1;
         G.banner = 'MISSION DONE +1 ◆';
+      bannerScale.setValue(0);
+      Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
         jingle([4, 6, 9], 70);
       }
     });
@@ -1322,7 +1351,11 @@ function Game() {
       const cells = [...hit].map((k) => [Math.floor(k / COLS), k % COLS]);
       G.rings = cells.map(([r, c]) => ({ r, c, col: G.board[r][c] }));
       G.popping = hit;
-      if (G.chain >= 2) G.banner = `x${G.chain} CHAIN`;
+      if (G.chain >= 2) {
+        G.banner = `x${G.chain} CHAIN`;
+        bannerScale.setValue(0);
+        Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 160, useNativeDriver: true }).start();
+      }
       render();
       buzz(G.chain);
       playChain(G.chain, flat.length);
@@ -1353,6 +1386,8 @@ function Game() {
           G.fever = 0;
           G.feverUntil = Date.now() + 7000;
           G.banner = 'FEVER x2!';
+      bannerScale.setValue(0);
+      Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
           track('fever', 1);
           jingle([0, 2, 4, 6, 8, 9], 60);
           doShake(12);
@@ -1376,12 +1411,16 @@ function Game() {
     if (G.board.every((row) => row.every((v) => !v))) {
       G.score += 500;
       G.banner = 'PERFECT!';
+      bannerScale.setValue(0);
+      Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
       jingle([0, 2, 4, 6, 8, 9], 70);
       sfx('choir');
       doShake(16);
     } else if (wasDanger && !G.board.slice(0, 4).some((row) => row.some(Boolean))) {
       G.score += 200;
       G.banner = 'CLUTCH!';
+      bannerScale.setValue(0);
+      Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
       jingle([4, 6, 9], 80);
       doShake(10);
     }
@@ -1423,6 +1462,7 @@ function Game() {
     G.lockAt = 0;
     buzz(0);
     sfx('land');
+    Animated.sequence([Animated.timing(punch,{toValue:0.88,duration:60,useNativeDriver:true}),Animated.spring(punch,{toValue:1,friction:3,useNativeDriver:true})]).start();
     G.snap = {
       board: G.board.map((row) => row.slice()),
       score: G.score,
@@ -1711,6 +1751,29 @@ function Game() {
     applyMusic();
   }, [paused]);
   const T = REALMS[realm];
+
+  // find cells in groups of 2+ (show chain potential to player)
+  const glowSet = new Set();
+  if (G.status === 'playing' || G.status === 'resolving') {
+    const seen2 = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const v = display[r][c];
+        if (!v || v >= ROCK || seen2[r][c]) continue;
+        const grp = [];
+        const stk = [[r, c]];
+        while (stk.length) {
+          const [y, x] = stk.pop();
+          if (y < 0 || y >= ROWS || x < 0 || x >= COLS || seen2[y][x] || display[y][x] !== v) continue;
+          seen2[y][x] = true;
+          grp.push([y, x]);
+          stk.push([y + 1, x], [y - 1, x], [y, x + 1], [y, x - 1]);
+        }
+        if (grp.length >= 2) grp.forEach(([y, x]) => glowSet.add(y * COLS + x));
+      }
+    }
+  }
+
   let ghost = [];
   if (G.piece) {
     let gp = G.piece;
@@ -1859,6 +1922,29 @@ function Game() {
             <View key={`vc${i}`} pointerEvents="none" style={{ position: 'absolute', top: 2, bottom: 2, left: 2 + (i + 1) * cell, width: 1, backgroundColor: 'rgba(255,255,255,0.04)' }} />
           ))}
 
+          {[...glowSet].map((k) => {
+            const gr = Math.floor(k / COLS);
+            const gc = k % COLS;
+            const gcol = display[gr][gc];
+            const isAlmost = !G.popping.has(k);
+            return isAlmost ? (
+              <Animated.View
+                key={`gl${k}`}
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  left: 2 + gc * cell + cell * 0.08,
+                  top: 2 + gr * cell + cell * 0.08,
+                  width: cell * 0.84,
+                  height: cell * 0.84,
+                  borderRadius: cell,
+                  backgroundColor: COLORS[gcol],
+                  opacity: float.interpolate({ inputRange: [0, 1], outputRange: [0.1, 0.22] }),
+                }}
+              />
+            ) : null;
+          })}
+
           {ghost.map(([r, c, col]) => (
             <View
               key={`g${r}-${c}`}
@@ -1947,9 +2033,39 @@ function Game() {
             />
           ))}
 
+          {G.status === 'playing' && [0,1,2,3,4,5].map((i) => (
+            <Animated.View
+              key={`p${i}`}
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: `${12 + i * 15}%`,
+                top: `${10 + ((i * 37) % 70)}%`,
+                width: 3,
+                height: 3,
+                borderRadius: 3,
+                backgroundColor: T.accent,
+                opacity: float.interpolate({ inputRange: [0, 1], outputRange: [i % 2 === 0 ? 0.08 : 0.18, i % 2 === 0 ? 0.22 : 0.06] }),
+                transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, i % 2 === 0 ? -18 : 14] }) }],
+              }}
+            />
+          ))}
+
           {G.banner ? (
             <View style={styles.bannerWrap} pointerEvents="none">
-              <Text style={styles.banner}>{G.banner}</Text>
+              <Animated.Text
+                style={[
+                  styles.banner,
+                  {
+                    fontSize: CHAIN_SIZES[Math.min(G.chain, CHAIN_SIZES.length - 1)] || 40,
+                    color: CHAIN_COLORS[Math.min(G.chain, CHAIN_COLORS.length - 1)] || '#ffd23b',
+                    textShadowColor: CHAIN_COLORS[Math.min(G.chain + 1, CHAIN_COLORS.length - 1)] || '#ff3b6b',
+                    transform: [{ scale: bannerScale }],
+                  },
+                ]}
+              >
+                {G.banner}
+              </Animated.Text>
             </View>
           ) : null}
 
@@ -2124,9 +2240,11 @@ function Game() {
                       : 'GAME OVER'}
                   </Text>
                   {G.status === 'won' && (
-                    <Text style={styles.bigStars}>
-                      {'★'.repeat(G.earned) + '☆'.repeat(3 - G.earned)}
-                    </Text>
+                    <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                      {[1, 2, 3].map((i) => (
+                        <StarReveal key={i} filled={i <= G.earned} delay={i * 240} size={38} />
+                      ))}
+                    </View>
                   )}
                   {G.status === 'over' && soClose() && (
                     <Text style={[styles.hatch, { color: T.accent }]}>
