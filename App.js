@@ -155,7 +155,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v16';
+const VERSION = 'v17';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -682,23 +682,32 @@ function queueEvent(e) {
   AsyncStorage.setItem('evq', JSON.stringify(evQ)).catch(() => {});
   flushEvents();
 }
+// Scores go through server functions only (validated, one best score per player per day).
+async function sbRpc(fn, args) {
+  const h = { apikey: SUPABASE_ANON, 'Content-Type': 'application/json' };
+  if (SUPABASE_ANON.startsWith('eyJ')) h.Authorization = 'Bearer ' + SUPABASE_ANON;
+  return fetchT(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: h, body: JSON.stringify(args) });
+}
 async function submitDaily(row) {
   if (!ONLINE) return;
   try {
-    await sbPost('daily_scores', [row]);
+    await sbRpc('submit_daily_score', {
+      p_day: row.day,
+      p_pid: row.pid,
+      p_name: row.name,
+      p_score: row.score,
+      p_chain: row.chain,
+      p_country: row.country,
+    });
   } catch (e) {}
 }
 async function fetchBoard(day) {
   if (!ONLINE) return null;
   try {
-    const res = await fetchT(
-      `${SUPABASE_URL}/rest/v1/daily_scores?day=eq.${day}&select=pid,name,score,chain,country&order=score.desc&limit=40`,
-      { headers: sbHeaders() }
-    );
+    const res = await sbRpc('get_daily_board', { p_day: day, p_pid: PID, p_limit: 40 });
     if (!res.ok) return null;
     const rows = await res.json();
-    const seen = new Set();
-    return rows.filter((r) => (seen.has(r.pid) ? false : (seen.add(r.pid), true)));
+    return Array.isArray(rows) ? rows : null;
   } catch (e) {
     return null;
   }
@@ -2284,8 +2293,8 @@ function Game() {
                         <Text style={styles.hint}>no scores yet (or offline)</Text>
                       ) : (
                         G.lb.slice(0, 5).map((r, i) => (
-                          <Text key={r.pid} style={[styles.small, r.pid === PID && { color: T.accent }]}>
-                            {i + 1}. {r.name} {r.country}  {r.score}  x{r.chain}
+                          <Text key={r.pos} style={[styles.small, r.is_me && { color: T.accent }]}>
+                            {r.pos}. {r.name} {r.country}  {r.score}  x{r.chain}
                           </Text>
                         ))
                       )}
