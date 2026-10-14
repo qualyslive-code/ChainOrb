@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated, ScrollView,
-  useWindowDimensions, StatusBar, PanResponder, Share,
+  useWindowDimensions, StatusBar, PanResponder, Share, Platform,
 } from 'react-native';
 import { Image, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -737,12 +737,21 @@ const EMO = ['⬜', '🟥', '🟩', '🟦', '🟨', '🟪', '⬛', '💣', '🪨
 function Orb({ color, size, popping, worry, active }) {
   if (!color) return <View style={{ width: size, height: size }} />;
   const sk = color >= 1 && color <= 5 ? SKIN : 'gel';
+  const shape = sk === 'gel' && color >= 1 && color <= 5 ? color : 0;
+  const gemLike = sk === 'gem' || shape === 4;
+  const R = size;
+  const radii =
+    sk === 'gem' || shape === 4 ? { borderRadius: R * 0.2 }
+    : shape === 2 ? { borderRadius: R * 0.3 }
+    : shape === 3 ? { borderTopLeftRadius: R * 0.5, borderBottomRightRadius: R * 0.5, borderTopRightRadius: R * 0.12, borderBottomLeftRadius: R * 0.12 }
+    : shape === 5 ? { borderTopLeftRadius: R * 0.5, borderTopRightRadius: R * 0.5, borderBottomLeftRadius: R * 0.2, borderBottomRightRadius: R * 0.2 }
+    : { borderRadius: R };
   return (
     <View style={{ width: size, height: size, padding: size * 0.06 }}>
       <View
         style={{
           flex: 1,
-          borderRadius: sk === 'gem' ? size * 0.2 : size,
+          ...radii,
           backgroundColor: popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : COLORS[color],
           borderWidth: color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? size * 0.14 : sk === 'candy' ? 3 : size * 0.05,
           borderColor: color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color] : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : 'rgba(0,0,0,0.35)',
@@ -751,7 +760,7 @@ function Orb({ color, size, popping, worry, active }) {
           shadowOpacity: active ? 1 : 0.5,
           shadowRadius: active ? 14 : 4,
           elevation: active ? 12 : 5,
-          transform: [{ scale: popping ? 1.2 : 1 }, ...(sk === 'gem' ? [{ rotate: '45deg' }, { scale: 0.78 }] : [])],
+          transform: [{ scale: popping ? 1.2 : 1 }, ...(gemLike ? [{ rotate: '45deg' }, { scale: 0.78 }] : [])],
           alignItems: 'center',
         }}
       >
@@ -802,7 +811,7 @@ function Orb({ color, size, popping, worry, active }) {
             borderColor: 'rgba(0,0,0,0.12)',
           }}
         />
-        {color >= 1 && color <= 5 && sk !== 'gem' && (
+        {color >= 1 && color <= 5 && !gemLike && (
           <View style={{ position: 'absolute', top: size * 0.4, flexDirection: 'row' }}>
             {[0, 1].map((i) => (
               <View
@@ -822,12 +831,12 @@ function Orb({ color, size, popping, worry, active }) {
           <Text
             style={{
               position: 'absolute',
-              top: sk === 'gem' ? size * 0.3 : size * 0.62,
+              top: gemLike ? size * 0.3 : size * 0.62,
               fontSize: size * 0.26,
               fontWeight: '900',
               includeFontPadding: false,
               color: sk === 'ring' ? COLORS[color] : 'rgba(20,20,42,0.6)',
-              transform: sk === 'gem' ? [{ rotate: '-45deg' }] : [],
+              transform: gemLike ? [{ rotate: '-45deg' }] : [],
             }}
           >
             {GLYPHS[color]}
@@ -835,6 +844,61 @@ function Orb({ color, size, popping, worry, active }) {
         )}
       </View>
     </View>
+  );
+}
+
+
+function Scene({ realm, width, height }) {
+  const W = width;
+  const tri = (left, base, h, color, bottom = 0) => ({
+    position: 'absolute', left, bottom, width: 0, height: 0,
+    borderLeftWidth: base, borderRightWidth: base, borderBottomWidth: h,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: color,
+  });
+  if (realm === 0) {
+    return (
+      <>
+        <View style={{ position: 'absolute', right: 26, top: 64, width: 84, height: 84, borderRadius: 84, backgroundColor: '#fff3b0', opacity: 0.92 }} />
+        <View style={{ position: 'absolute', left: -W * 0.15, bottom: -150, width: W * 1.1, height: 260, borderRadius: 260, backgroundColor: '#8fe05a' }} />
+        <View style={{ position: 'absolute', left: W * 0.35, bottom: -170, width: W * 1.1, height: 260, borderRadius: 260, backgroundColor: '#4fbf5a' }} />
+      </>
+    );
+  }
+  if (realm === 1) {
+    return (
+      <>
+        <View style={{ position: 'absolute', left: 28, top: 70, width: 70, height: 70, borderRadius: 70, backgroundColor: '#fffbe0', opacity: 0.95 }} />
+        {[[0.3, 0.07], [0.55, 0.12], [0.8, 0.06], [0.68, 0.2], [0.2, 0.22]].map(([x, y], i) => (
+          <View key={i} style={{ position: 'absolute', left: W * x, top: height * y, width: 4, height: 4, borderRadius: 4, backgroundColor: '#fff', opacity: 0.8 }} />
+        ))}
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 130, backgroundColor: 'rgba(255,255,255,0.14)' }} />
+        <View style={{ position: 'absolute', left: -20, right: -20, bottom: 100, height: 60, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.10)' }} />
+      </>
+    );
+  }
+  if (realm === 2) {
+    return (
+      <>
+        <View style={tri(-30, 150, 230, 'rgba(255,255,255,0.40)')} />
+        <View style={tri(W * 0.35, 170, 290, 'rgba(255,255,255,0.55)')} />
+        <View style={tri(W * 0.7, 120, 190, 'rgba(255,255,255,0.35)')} />
+        {[[0.15, 0.1], [0.5, 0.05], [0.85, 0.14], [0.35, 0.2], [0.72, 0.28]].map(([x, y], i) => (
+          <View key={i} style={{ position: 'absolute', left: W * x, top: height * y, width: 6, height: 6, borderRadius: 6, backgroundColor: '#fff', opacity: 0.85 }} />
+        ))}
+      </>
+    );
+  }
+  const bld = [[0.02, 60, 150], [0.16, 48, 220], [0.3, 70, 130], [0.5, 52, 250], [0.64, 66, 170], [0.82, 56, 210]];
+  return (
+    <>
+      {bld.map(([x, w, h], i) => (
+        <View key={i} style={{ position: 'absolute', left: W * x, bottom: 0, width: w, height: h, backgroundColor: 'rgba(25,0,70,0.72)' }}>
+          {[0, 1, 2, 3, 4].map((j) => (
+            <View key={j} style={{ position: 'absolute', left: 8 + (j % 2) * 22, top: 12 + j * 26, width: 8, height: 10, backgroundColor: (i + j) % 3 === 0 ? 'rgba(255,230,120,0.9)' : 'rgba(255,120,230,0.55)' }} />
+          ))}
+        </View>
+      ))}
+    </>
   );
 }
 
@@ -895,6 +959,78 @@ function ScorePopup({ r, c, pts, cell }) {
     >
       +{pts}
     </Animated.Text>
+  );
+}
+
+
+// Android draws the nav bar over the app: keep controls clear of it
+const BOTTOM_PAD = Platform.OS === 'android' ? 52 : 24;
+
+const hex2rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+function skyBands(stops, n = 18) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / (n - 1)) * (stops.length - 1);
+    const k = Math.min(stops.length - 2, Math.floor(t));
+    const f = t - k;
+    const a = hex2rgb(stops[k]);
+    const b = hex2rgb(stops[k + 1]);
+    out.push(`rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * f)).join(',')})`);
+  }
+  return out;
+}
+
+// Draggable floating pad: drag the grip anywhere, double-tap the grip to reset. Position is remembered.
+function FloatPad({ id, anchor, bounds, children }) {
+  const pos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const base = useRef({ x: 0, y: 0 });
+  const lastTap = useRef(0);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const place = (x, y) => {
+    const nx = clamp(x, bounds.minX, bounds.maxX);
+    const ny = clamp(y, bounds.minY, bounds.maxY);
+    pos.setValue({ x: nx, y: ny });
+    return { x: nx, y: ny };
+  };
+  useEffect(() => {
+    AsyncStorage.getItem('pad_' + id)
+      .then((v) => {
+        if (!v) return;
+        const o = JSON.parse(v);
+        base.current = place(o.x || 0, o.y || 0);
+      })
+      .catch(() => {});
+  }, []);
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderMove: (_, g) => {
+        place(base.current.x + g.dx, base.current.y + g.dy);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (Math.abs(g.dx) < 6 && Math.abs(g.dy) < 6) {
+          const now = Date.now();
+          if (now - lastTap.current < 350) {
+            base.current = place(0, 0);
+          }
+          lastTap.current = now;
+        } else {
+          base.current = place(base.current.x + g.dx, base.current.y + g.dy);
+        }
+        AsyncStorage.setItem('pad_' + id, JSON.stringify(base.current)).catch(() => {});
+      },
+    })
+  ).current;
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      style={[anchor === 'left' ? styles.padL : styles.padR, { transform: pos.getTranslateTransform() }]}
+    >
+      <View {...pan.panHandlers} style={styles.grip}>
+        <Text style={styles.gripTxt}>⋮⋮⋮</Text>
+      </View>
+      {children}
+    </Animated.View>
   );
 }
 
@@ -1792,7 +1928,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 66) / COLS), Math.floor((height - 262) / ROWS))
+    Math.min(Math.floor((width - 66) / COLS), Math.floor((height - 190 - BOTTOM_PAD) / ROWS))
   );
 
   G.cell = cell;
@@ -1848,9 +1984,10 @@ function Game() {
     <View style={[styles.root, { backgroundColor: T.bg }]}>
       <StatusBar barStyle="light-content" />
       <View pointerEvents="none" style={ABS_FILL}>
-        {T.sky.map((c, i) => (
+        {skyBands(T.sky).map((c, i) => (
           <View key={i} style={{ flex: 1, backgroundColor: c }} />
         ))}
+        <Scene realm={realm} width={width} height={height} />
         {[
           { l: '-10%', t: '8%', z: 180, o: 0.10 },
           { l: '60%', t: '30%', z: 140, o: 0.09 },
@@ -1891,52 +2028,55 @@ function Game() {
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={styles.label}>LEVEL</Text>
           <Text style={styles.score}>{G.level}</Text>
-          <Pressable
-            onPress={() => {
-              if (G.status === 'playing') {
-                logEvent('quit');
-                G.status = 'menu';
-                render();
-              }
-            }}
-          >
-            <Text style={styles.small}>☰ MENU</Text>
-          </Pressable>
-          <Pressable hitSlop={10} onPress={pause}>
-            <Text style={styles.small}>⏸ PAUSE</Text>
-          </Pressable>
-          {/* RESTART_BTN */}
-          {(G.status === 'playing' || G.status === 'paused') && (
+          <View style={{ flexDirection: 'row', marginTop: 2 }}>
             <Pressable
-              hitSlop={10}
+              hitSlop={8}
+              style={styles.ico}
               onPress={() => {
-                if (G.status !== 'playing' && G.status !== 'paused') return;
-                if (Date.now() - (G.restartArm || 0) < 2500) {
-                  G.restartArm = 0;
+                if (G.status === 'playing') {
                   logEvent('quit');
-                  start(G.level);
-                } else {
-                  G.restartArm = Date.now();
+                  G.status = 'menu';
                   render();
-                  setTimeout(() => render(), 2600);
                 }
               }}
             >
-              <Text style={styles.small}>
-                {Date.now() - (G.restartArm || 0) < 2500 ? '↻ TAP AGAIN' : '↻ RESTART'}
-              </Text>
+              <Text style={styles.icoTxt}>☰</Text>
             </Pressable>
-          )}
-          <Pressable
-            hitSlop={10}
-            onPress={() => {
-              MUTED = !MUTED;
-              AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
-              render();
-            }}
-          >
-            <Text style={styles.small}>{MUTED ? '🔇 SOUND' : '🔊 SOUND'}</Text>
-          </Pressable>
+            <Pressable hitSlop={8} style={styles.ico} onPress={pause}>
+              <Text style={styles.icoTxt}>⏸</Text>
+            </Pressable>
+            {(G.status === 'playing' || G.status === 'paused') && (
+              <Pressable
+                hitSlop={8}
+                style={styles.ico}
+                onPress={() => {
+                  if (G.status !== 'playing' && G.status !== 'paused') return;
+                  if (Date.now() - (G.restartArm || 0) < 2500) {
+                    G.restartArm = 0;
+                    logEvent('quit');
+                    start(G.level);
+                  } else {
+                    G.restartArm = Date.now();
+                    render();
+                    setTimeout(() => render(), 2600);
+                  }
+                }}
+              >
+                <Text style={styles.icoTxt}>{Date.now() - (G.restartArm || 0) < 2500 ? '↻?' : '↻'}</Text>
+              </Pressable>
+            )}
+            <Pressable
+              hitSlop={8}
+              style={styles.ico}
+              onPress={() => {
+                MUTED = !MUTED;
+                AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
+                render();
+              }}
+            >
+              <Text style={styles.icoTxt}>{MUTED ? '🔇' : '🔊'}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
 
@@ -2402,18 +2542,20 @@ function Game() {
         <View style={{ width: 46 }} />
       </View>
 
-      <View pointerEvents="box-none" style={styles.floatL}>
-        <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={styles.fbtn} />
-        <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={styles.fbtn} />
-        <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={styles.fbtn} />
-      </View>
-      <View pointerEvents="box-none" style={styles.floatR}>
+      <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - 190, minY: -(height - 230), maxY: 0 }}>
+        <View style={{ flexDirection: 'row' }}>
+          <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={styles.fbtn} />
+          <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={styles.fbtn} />
+          <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={styles.fbtn} />
+        </View>
+      </FloatPad>
+      <FloatPad id="R" anchor="right" bounds={{ minX: -(width - 170), maxX: 0, minY: -(height - 260), maxY: 0 }}>
         <View style={{ flexDirection: 'row' }}>
           <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} style={styles.fbtn} />
           <HoldButton dim={G.status !== 'playing'} label="⟳" onPress={() => rotate(1)} style={styles.fbtn} />
         </View>
         <HoldButton dim={G.status !== 'playing'} label="DROP" onPress={hardDrop} style={styles.fdrop} textStyle={styles.dropTxt} />
-      </View>
+      </FloatPad>
       {G.ad && (
         <View style={styles.adCover}>
           <Text style={styles.adTxt}>AD (placeholder)</Text>
@@ -2518,8 +2660,12 @@ const styles = StyleSheet.create({
   btnTxt: { color: '#fff', fontSize: 26, fontWeight: '700' },
   dropBtn: { backgroundColor: 'rgba(255,59,107,0.20)', borderColor: '#ff3b6b', borderTopColor: '#ff7a9a' },
   dropTxt: { fontSize: 20, fontWeight: '900', letterSpacing: 2 },
-  floatL: { position: 'absolute', left: 8, bottom: 12, flexDirection: 'row', alignItems: 'center' },
-  floatR: { position: 'absolute', right: 8, bottom: 12, alignItems: 'flex-end' },
+  padL: { position: 'absolute', left: 8, bottom: BOTTOM_PAD + 6, alignItems: 'flex-start' },
+  padR: { position: 'absolute', right: 8, bottom: BOTTOM_PAD + 6, alignItems: 'flex-end' },
+  grip: { alignSelf: 'center', paddingHorizontal: 22, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.28)', marginBottom: 2 },
+  gripTxt: { color: 'rgba(255,255,255,0.85)', fontSize: 12, letterSpacing: 2, fontWeight: '900' },
+  ico: { minWidth: 30, height: 28, marginLeft: 4, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  icoTxt: { color: '#fff', fontSize: 15, fontWeight: '900' },
   fbtn: { flex: 0, width: 50, height: 50, marginHorizontal: 3, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.24)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)' },
   fdrop: { flex: 0, width: 76, height: 76, marginHorizontal: 3, marginTop: 6, borderRadius: 38, backgroundColor: 'rgba(255,59,107,0.65)', borderWidth: 2, borderColor: '#ffd0dc' },
 });
