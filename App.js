@@ -8,6 +8,9 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
+import { useFonts, Fredoka_700Bold } from '@expo-google-fonts/fredoka';
+
+const FONT = 'Fredoka_700Bold';
 
 /* ============================== ENGINE ============================== */
 const COLS = 6;
@@ -737,6 +740,17 @@ async function resendDaily() {
     if (r) AsyncStorage.removeItem('pdaily').catch(() => {});
   } catch (e) {}
 }
+async function fetchTopRun(day) {
+  if (!ONLINE) return null;
+  try {
+    const res = await sbRpc('top_run', { p_day: day });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows[0] && rows[0].log ? rows[0] : null;
+  } catch (e) {
+    return null;
+  }
+}
 async function fetchBoard(day) {
   if (!ONLINE) return null;
   try {
@@ -981,6 +995,51 @@ function CountUp({ to, style }) {
   return <Text style={style}>{v}</Text>;
 }
 
+const MAP_W = 300, NODE = 58, NODE_H = 78, HEAD_H = 40;
+const nodeX = (L) => MAP_W / 2 + Math.sin((L - 1) * 0.95) * 86;
+const nodeY = (L) => 46 + (L - 1) * NODE_H + realmOf(L) * HEAD_H;
+function WorldMap({ unlocked, stars, float, onPlay }) {
+  const H = nodeY(MAX_LEVEL) + NODE_H;
+  const items = [];
+  for (let L = 1; L <= MAX_LEVEL; L++) {
+    const x = nodeX(L), y = nodeY(L);
+    if (L === 1 || realmOf(L) !== realmOf(L - 1)) {
+      items.push(
+        <Text key={`h${L}`} style={{ position: 'absolute', left: 0, right: 0, top: y - 44, textAlign: 'center', color: REALMS[realmOf(L)].accent, fontFamily: FONT, fontSize: 14, letterSpacing: 3, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }}>
+          {REALMS[realmOf(L)].name}
+        </Text>
+      );
+    }
+    if (L > 1) {
+      const px = nodeX(L - 1), py = nodeY(L - 1);
+      [0.28, 0.5, 0.72].forEach((t, i) => items.push(
+        <View key={`d${L}-${i}`} style={{ position: 'absolute', left: px + (x - px) * t + NODE / 2 - 4, top: py + (y - py) * t + NODE / 2 - 4, width: 8, height: 8, borderRadius: 4, backgroundColor: L <= unlocked ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)' }} />
+      ));
+    }
+    const open = L <= unlocked;
+    const cur = L === unlocked;
+    items.push(
+      <Pressable
+        key={`n${L}`}
+        disabled={!open}
+        onPress={() => onPlay(L)}
+        style={{ position: 'absolute', left: x, top: y, width: NODE, height: NODE, borderRadius: NODE, alignItems: 'center', justifyContent: 'center', borderWidth: cur ? 4 : 3, borderColor: open ? (cur ? '#ffd23b' : '#fff') : '#3a3a5a', backgroundColor: open ? REALMS[realmOf(L)].sky[1] : '#22223a', opacity: open ? 1 : 0.8, shadowColor: cur ? '#ffd23b' : '#000', shadowOpacity: cur ? 1 : 0.4, shadowRadius: cur ? 12 : 4, elevation: cur ? 10 : 4 }}
+      >
+        <Text style={styles.lvlTxt}>{open ? L : '🔒'}</Text>
+        {open ? <Text style={{ position: 'absolute', bottom: -16, color: '#ffd23b', fontSize: 11, letterSpacing: 1 }}>{'★'.repeat(stars[L] || 0) + '☆'.repeat(3 - (stars[L] || 0))}</Text> : null}
+      </Pressable>
+    );
+    if (cur) {
+      items.push(
+        <Animated.View key="mascot" pointerEvents="none" style={{ position: 'absolute', left: x + NODE - 6, top: y - 14, transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -7] }) }] }}>
+          <Orb color={(L % 5) + 1} size={30} />
+        </Animated.View>
+      );
+    }
+  }
+  return <View style={{ width: MAP_W, height: H, marginTop: 6 }}>{items}</View>;
+}
+
 function StarReveal({ filled, delay, size }) {
   const sc = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -1156,6 +1215,7 @@ function Game() {
     card: null,
     cardSnap: null,
     lb: null,
+    chestDay: '',
     lvlBest: {},
     newBest: false,
     pausedAt: 0,
@@ -1353,7 +1413,17 @@ function Game() {
     render();
   };
 
+  const endReplay = () => {
+    G.replay = null;
+    G.rp = false;
+    G.piece = null;
+    G.cd = 0;
+    G.status = 'menu';
+    render();
+  };
+
   const gameOver = () => {
+    if (G.replay) return endReplay();
     logEvent('loss');
     G.fails[G.level] = (G.fails[G.level] || 0) + 1;
     if (G.t === 'daily') saveDaily();
@@ -1457,6 +1527,7 @@ function Game() {
     saveMeta();
   };
   const track = (k, v) => {
+    if (G.replay) return;
     const m = G.missions;
     if (!m || m.d !== dateKey()) return;
     m.items.forEach((it) => {
@@ -1524,6 +1595,49 @@ function Game() {
       track('stars', after - before);
       G.starAd = true;
     });
+  const watchTop = async () => {
+    if (G.replayBusy || G.replay) return;
+    G.replayBusy = true;
+    const top = await fetchTopRun(G.day || dateKey());
+    G.replayBusy = false;
+    if (!top) {
+      G.banner = 'NO REPLAY YET';
+      bannerScale.setValue(0);
+      Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
+      render();
+      setTimeout(() => { G.banner = ''; render(); }, 1500);
+      return;
+    }
+    const token = Date.now();
+    G.replay = { token, name: top.name, score: top.score };
+    start(22);
+    const live = () => alive.current && G.replay && G.replay.token === token;
+    const wait = async () => {
+      while (live() && (G.status === 'resolving' || G.status === 'paused')) await sleep(40);
+    };
+    await sleep(250);
+    for (const ch of top.log) {
+      if (!live()) return;
+      await wait();
+      if (!live() || G.status !== 'playing') break;
+      G.rp = true;
+      try {
+        if (ch === 'L') move(-1);
+        else if (ch === 'R') move(1);
+        else if (ch === 'c') rotate(1);
+        else if (ch === 'w') rotate(-1);
+        else if (ch === 's') softDrop();
+        else if (ch === 'h') hardDrop();
+        else step(true); // 'd' and 'k': one cell down, or lock when blocked
+      } finally {
+        G.rp = false;
+      }
+      await sleep(ch === 'd' || ch === 'k' ? 110 : ch === 'h' ? 90 : 70);
+    }
+    await wait();
+    if (live()) endReplay();
+  };
+
   const nextAction = () => {
     if (G.t === 'daily') return shareDaily();
     const nxt = G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level;
@@ -1533,6 +1647,7 @@ function Game() {
   };
 
   const win = () => {
+    if (G.replay) return endReplay();
     logEvent('win');
     if (G.t === 'daily') {
       saveDaily();
@@ -1799,12 +1914,14 @@ function Game() {
   };
 
   const softDrop = () => {
+    if (G.replay && !G.rp) return;
     if (G.status !== 'playing' || !G.piece) return;
     G.log += 's';
     if (step(true)) G.score += 1;
   };
 
   const move = (dx) => {
+    if (G.replay && !G.rp) return;
     if (G.status !== 'playing' || !G.piece) return;
     G.log += dx > 0 ? 'R' : 'L';
     const p2 = { ...G.piece, c: G.piece.c + dx };
@@ -1815,6 +1932,7 @@ function Game() {
   };
 
   const rotate = (dir) => {
+    if (G.replay && !G.rp) return;
     if (G.status !== 'playing' || !G.piece) return;
     G.log += dir > 0 ? 'c' : 'w';
     const p2 = tryRotate(G.board, G.piece, dir);
@@ -1825,6 +1943,7 @@ function Game() {
   };
 
   const hardDrop = () => {
+    if (G.replay && !G.rp) return;
     if (G.status !== 'playing' || !G.piece) return;
     G.log += 'h';
     let n = 0;
@@ -1978,6 +2097,14 @@ function Game() {
         }
       })
       .catch(() => {});
+    AsyncStorage.getItem('chestDay')
+      .then((v) => {
+        if (v) {
+          G.chestDay = v;
+          render();
+        }
+      })
+      .catch(() => {});
     AsyncStorage.getItem('lvlBest')
       .then((v) => {
         if (v) {
@@ -2002,7 +2129,7 @@ function Game() {
     ).start();
     let t;
     const loop = () => {
-      step();
+      if (!G.replay) step();
       t = setTimeout(loop, speed());
     };
     t = setTimeout(loop, 700);
@@ -2033,7 +2160,7 @@ function Game() {
   }, [tense]);
   const cdRef = useRef(0);
   useEffect(() => {
-    if (G.status !== 'playing' || G.placed !== 0 || G.log || cdRef.current === G.startedAt) return;
+    if (G.replay || G.status !== 'playing' || G.placed !== 0 || G.log || cdRef.current === G.startedAt) return;
     const my = G.startedAt;
     cdRef.current = my;
     G.status = 'resolving';
@@ -2345,6 +2472,13 @@ function Game() {
             <ScorePopup key={o.id} r={o.r} c={o.c} pts={o.pts} cell={cell} color={COLORS[G.board[Math.round(o.r)] && G.board[Math.round(o.r)][Math.round(o.c)] || 1]} />
           ))}
 
+          {G.replay && (
+            <View style={{ position: 'absolute', top: 6, left: 0, right: 0, alignItems: 'center' }}>
+              <Pressable onPress={endReplay} style={{ backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 }}>
+                <Text style={{ color: '#ffd23b', fontFamily: FONT, fontSize: 12, letterSpacing: 1 }}>▶ REPLAY {G.replay.name} {G.replay.score}  ✕ STOP</Text>
+              </Pressable>
+            </View>
+          )}
           {G.cd > 0 && (
             <View pointerEvents="none" style={[ABS_FILL, { alignItems: 'center', justifyContent: 'center' }]}>
               <Text style={{ fontSize: 96, fontWeight: '900', color: '#fff', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 12 }}>{G.cd}</Text>
@@ -2477,7 +2611,9 @@ function Game() {
                       <Orb color={k} size={34} />
                     </Animated.View>
                   ))}
-                  <Text style={[styles.title, { textShadowColor: T.accent }]}>CHAINORB</Text>
+                  <Animated.View style={{ transform: [{ scale: float.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] }) }, { rotate: float.interpolate({ inputRange: [0, 1], outputRange: ['-1.5deg', '1.5deg'] }) }] }}>
+                    <Text style={[styles.title, { fontSize: 40, textShadowColor: T.accent }]}>CHAINORB</Text>
+                  </Animated.View>
                   <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
                   <Animated.View
                     style={{
@@ -2491,26 +2627,7 @@ function Game() {
                     </Text>
                   </Animated.View>
                   <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}{G.streak.n ? `  •  🔥${G.streak.n}` : ''}</Text>
-                  <View style={styles.grid}>
-                    {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((L) => {
-                      const open = L <= G.unlocked;
-                      return (
-                        <Pressable
-                          key={L}
-                          disabled={!open}
-                          onPress={() => start(L)}
-                          style={[styles.lvl, open && { borderColor: '#fff', backgroundColor: REALMS[realmOf(L)].sky[1] }, !open && styles.lvlLocked]}
-                        >
-                          <Text style={styles.lvlTxt}>{open ? L : '🔒'}</Text>
-                          {open ? (
-                            <Text style={styles.stars}>
-                              {'★'.repeat(G.stars[L] || 0) + '☆'.repeat(3 - (G.stars[L] || 0))}
-                            </Text>
-                          ) : null}
-                        </Pressable>
-                      );
-                    })}
-                  </View>
+                  <WorldMap unlocked={G.unlocked} stars={G.stars} float={float} onPlay={start} />
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
                     <Pressable
                       onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
@@ -2519,6 +2636,20 @@ function Game() {
                       <Text style={styles.modeTxt}>
                         {G.daily && G.daily.d === dateKey() ? 'DAILY ✓ SHARE' : '🔥 DAILY'}
                       </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        if (G.chestDay === dateKey()) return;
+                        G.chestDay = dateKey();
+                        G.shards += 1;
+                        saveMeta();
+                        AsyncStorage.setItem('chestDay', G.chestDay).catch(() => {});
+                        jingle([4, 6, 9], 70);
+                        render();
+                      }}
+                      style={[styles.modeBtn, { borderColor: '#ff8a3b', opacity: G.chestDay === dateKey() ? 0.5 : 1 }]}
+                    >
+                      <Text style={styles.modeTxt}>{G.chestDay === dateKey() ? '🎁 OPENED ✓' : '🎁 DAILY CHEST'}</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => {
@@ -2658,6 +2789,11 @@ function Game() {
                       )}
                     </View>
                   )}
+                  {G.t === 'daily' && ONLINE && G.lb && G.lb.length > 0 && (
+                    <Pressable style={styles.adBtn} onPress={watchTop}>
+                      <Text style={styles.adBtnTxt}>▶ WATCH THE #1 RUN</Text>
+                    </Pressable>
+                  )}
                   {G.card && G.card.chain >= 4 && (
                     <Pressable style={styles.adBtn} onPress={shareChain}>
                       <Text style={styles.adBtnTxt}>📤 SHARE YOUR x{G.card.chain} CHAIN</Text>
@@ -2747,8 +2883,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 14,
   },
-  title: { color: '#fff', textShadowColor: '#2bff88', textShadowRadius: 16, fontSize: 28, fontWeight: '900', letterSpacing: 4 },
-  overScore: { color: '#aaa', marginTop: 8, fontSize: 15 },
+  title: { color: '#fff', textShadowColor: '#2bff88', textShadowRadius: 16, fontSize: 30, fontFamily: FONT, letterSpacing: 3 },
+  overScore: { color: '#aaa', marginTop: 8, fontSize: 15, fontFamily: FONT },
   play: {
     marginTop: 22,
     backgroundColor: '#2bff88',
@@ -2756,7 +2892,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 40,
   },
-  playTxt: { color: '#04140b', fontSize: 20, fontWeight: '900', letterSpacing: 2 },
+  playTxt: { color: '#04140b', fontSize: 21, fontFamily: FONT, letterSpacing: 2 },
   hint: { color: 'rgba(255,255,255,0.85)', marginTop: 16, fontSize: 12 },
   bannerWrap: {
     ...ABS_FILL,
@@ -2773,12 +2909,12 @@ const styles = StyleSheet.create({
   chip: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 8, backgroundColor: 'rgba(0,0,0,0.35)' },
   hatch: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 8, letterSpacing: 1 },
   modeBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 16, borderWidth: 2.5, marginHorizontal: 5, marginVertical: 3, backgroundColor: 'rgba(255,255,255,0.16)' },
-  modeTxt: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
+  modeTxt: { color: '#fff', fontFamily: FONT, fontSize: 13, letterSpacing: 1 },
   adBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#ffd23b', backgroundColor: '#1a1a30' },
   adBtnTxt: { color: '#ffd23b', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
   adCover: { ...ABS_FILL, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
   adTxt: { color: '#aaa', fontSize: 14, letterSpacing: 3 },
-  adBig: { color: '#fff', fontSize: 64, fontWeight: '900' },
+  adBig: { color: '#fff', fontSize: 64, fontFamily: FONT },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: 'rgba(0,0,0,0.30)', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
@@ -2787,7 +2923,7 @@ const styles = StyleSheet.create({
   lvlLocked: { borderColor: 'rgba(255,255,255,0.25)', opacity: 0.7 },
   stars: { color: '#ffe14a', fontSize: 9, marginTop: 2 },
   bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
-  lvlTxt: { color: '#fff', fontSize: 17, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 3 },
+  lvlTxt: { color: '#fff', fontSize: 19, fontFamily: FONT, textShadowColor: 'rgba(0,0,0,0.4)', textShadowRadius: 3 },
   controls: { width: '94%', marginTop: 10 },
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
@@ -2898,6 +3034,8 @@ class Boundary extends React.Component {
 
 export default function App() {
   const [intro, setIntro] = useState(true);
+  const [fontsReady, fontErr] = useFonts({ Fredoka_700Bold });
+  if (!fontsReady && !fontErr) return <View style={{ flex: 1, backgroundColor: '#05050c' }} />;
   return (
     <Boundary>
       <View style={{ flex: 1, backgroundColor: '#05050c' }}>

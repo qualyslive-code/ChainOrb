@@ -56,5 +56,17 @@ Deno.serve(async (req: Request) => {
     try { msg = JSON.parse(t).message || msg; } catch { /* keep default */ }
     return json({ ok: false, error: String(msg).slice(0, 60) }, 422);
   }
+  // best-effort: keep the verified log so the #1 run can be replayed (needs the top_run migration)
+  try {
+    await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/store_run`, {
+      method: 'POST',
+      headers: {
+        apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_day: day, p_pid: pid, p_score: r.score, p_log: log }),
+    });
+  } catch { /* replay storage is optional */ }
   return json({ ok: true, score: r.score, chain: r.chain, placed: r.placed, won: r.won });
 });
