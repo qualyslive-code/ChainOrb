@@ -155,7 +155,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v17';
+const VERSION = 'v18';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -661,6 +661,7 @@ async function loadOnline() {
     if (q) evQ = JSON.parse(q) || [];
   } catch (e) {}
   flushEvents();
+  resendDaily();
 }
 // events wait in a small offline queue and are sent whenever the network allows
 async function flushEvents() {
@@ -688,17 +689,35 @@ async function sbRpc(fn, args) {
   if (SUPABASE_ANON.startsWith('eyJ')) h.Authorization = 'Bearer ' + SUPABASE_ANON;
   return fetchT(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: h, body: JSON.stringify(args) });
 }
-async function submitDaily(row) {
+// The server replays the move log and computes the score itself, so a client can't claim a score.
+async function postDaily(p) {
+  try {
+    const res = await fetchT(`${SUPABASE_URL}/functions/v1/verify-daily`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify(p),
+    }, 12000);
+    const j = await res.json().catch(() => null);
+    if (res.status >= 500 || !j) return null; // transient: keep for retry
+    return j; // { ok, score, chain, placed } or { ok:false, error }
+  } catch (e) {
+    return null; // offline: keep for retry
+  }
+}
+async function submitDaily(p) {
+  if (!ONLINE) return null;
+  AsyncStorage.setItem('pdaily', JSON.stringify(p)).catch(() => {});
+  const r = await postDaily(p);
+  if (r) AsyncStorage.removeItem('pdaily').catch(() => {});
+  return r;
+}
+async function resendDaily() {
   if (!ONLINE) return;
   try {
-    await sbRpc('submit_daily_score', {
-      p_day: row.day,
-      p_pid: row.pid,
-      p_name: row.name,
-      p_score: row.score,
-      p_chain: row.chain,
-      p_country: row.country,
-    });
+    const raw = await AsyncStorage.getItem('pdaily');
+    if (!raw) return;
+    const r = await postDaily(JSON.parse(raw));
+    if (r) AsyncStorage.removeItem('pdaily').catch(() => {});
   } catch (e) {}
 }
 async function fetchBoard(day) {
@@ -937,7 +956,8 @@ function Game() {
     missions: null,
     streak: { last: '', n: 0 },
     fever: 0,
-    feverUntil: 0,
+    feverPcs: 0,
+    log: '',
     continued: false,
     starAd: false,
     ad: null,
@@ -1048,7 +1068,8 @@ function Game() {
   };
 
   const start = (L) => {
-    RNG = L === 22 ? seeded(dateSeed()) : Math.random;
+    G.day = dateKey();
+    RNG = L === 22 ? seeded(Number(G.day.replace(/-/g, ''))) : Math.random;
     touchStreak();
     const cfg = LEVELS[L - 1];
     G.level = L;
@@ -1071,7 +1092,8 @@ function Game() {
     G.boss = false;
     G.prismNext = false;
     G.fever = 0;
-    G.feverUntil = 0;
+    G.feverPcs = 0;
+    G.log = '';
     G.continued = false;
     G.starAd = false;
     G.seq = (cfg.seq || []).map((x) => x.slice());
@@ -1137,11 +1159,21 @@ function Game() {
     });
   };
   const saveDaily = () => {
-    G.daily = { d: dateKey(), s: G.score, c: G.maxChain };
+    G.daily = { d: G.day, s: G.score, c: G.maxChain };
     AsyncStorage.setItem('daily', JSON.stringify(G.daily)).catch(() => {});
     if (ONLINE) {
-      submitDaily({ day: dateKey(), pid: PID, name: NICK, score: G.score, chain: G.maxChain, country: COUNTRY })
-        .then(() => fetchBoard(dateKey()))
+      const day = G.day;
+      submitDaily({ day, pid: PID, name: NICK, country: COUNTRY, log: G.log, ms: Date.now() - G.startedAt, v: VERSION })
+        .then((r) => {
+          if (r && r.ok === false) logEvent('sv_reject');
+          if (r && r.ok && r.score !== G.score) {
+            logEvent('sv_mismatch'); // server is the source of truth for the daily score
+            G.score = r.score;
+            G.daily = { d: day, s: r.score, c: r.chain };
+            AsyncStorage.setItem('daily', JSON.stringify(G.daily)).catch(() => {});
+          }
+          return fetchBoard(day);
+        })
         .then((rows) => {
           G.lb = rows || [];
           render();
@@ -1325,6 +1357,7 @@ function Game() {
     G.status = 'resolving';
     G.chain = 0;
     const wasDanger = G.board.slice(0, 4).some((row) => row.some(Boolean));
+    const feverAtLock = G.feverPcs > 0;
     render();
     while (alive.current) {
       if (gravity(G.board)) {
@@ -1384,16 +1417,16 @@ function Game() {
       if (G.chain >= 4) doPunch();
       // slow-mo: the cascade ripples out slower from chain 3 up
       await sleep(G.chain >= 3 ? 520 : 260);
-      const pts = flat.length * 10 * Math.pow(2, G.chain - 1) * (Date.now() < G.feverUntil ? 2 : 1);
+      const pts = flat.length * 10 * Math.pow(2, G.chain - 1) * (G.feverPcs > 0 ? 2 : 1);
       G.score += pts;
       const centR = flat.reduce((a,x)=>a+x[0],0)/flat.length;
       const centC = flat.reduce((a,x)=>a+x[1],0)/flat.length;
       G.popups = [...(G.popups||[]).slice(-5), { id: Date.now()+Math.random(), r: centR, c: centC, pts }];
-      if (Date.now() >= G.feverUntil) {
+      if (!(G.feverPcs > 0)) {
         G.fever += flat.length * 4;
         if (G.fever >= 100) {
           G.fever = 0;
-          G.feverUntil = Date.now() + 7000;
+          G.feverPcs = 3; // fever x2 lasts 3 pieces: deterministic, so the server can replay it
           G.banner = 'FEVER x2!';
       bannerScale.setValue(0);
       Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
@@ -1413,6 +1446,7 @@ function Game() {
       await sleep(110);
     }
     if (!alive.current) return;
+    if (feverAtLock && G.feverPcs > 0) G.feverPcs--;
     if (G.cardSnap && G.chain >= 3 && G.chain > (G.card ? G.card.chain : 0)) {
       G.card = { chain: G.chain, grid: G.cardSnap };
     }
@@ -1513,6 +1547,7 @@ function Game() {
     if (G.status !== 'playing' || !G.piece) return false;
     const p2 = { ...G.piece, r: G.piece.r + 1 };
     if (valid(G.board, p2)) {
+      if (!force) G.log += 'd';
       G.piece = p2;
       G.lockAt = 0;
       fallY.setValue(-(G.cell || 30));
@@ -1520,17 +1555,23 @@ function Game() {
       render();
       return true;
     }
-    if (force || (G.lockAt && Date.now() - G.lockAt >= 350)) lock();
+    if (force || (G.lockAt && Date.now() - G.lockAt >= 350)) {
+      if (!force) G.log += 'k';
+      lock();
+    }
     else if (!G.lockAt) G.lockAt = Date.now();
     return false;
   };
 
   const softDrop = () => {
+    if (G.status !== 'playing' || !G.piece) return;
+    G.log += 's';
     if (step(true)) G.score += 1;
   };
 
   const move = (dx) => {
     if (G.status !== 'playing' || !G.piece) return;
+    G.log += dx > 0 ? 'R' : 'L';
     const p2 = { ...G.piece, c: G.piece.c + dx };
     if (valid(G.board, p2)) {
       G.piece = p2;
@@ -1540,6 +1581,7 @@ function Game() {
 
   const rotate = (dir) => {
     if (G.status !== 'playing' || !G.piece) return;
+    G.log += dir > 0 ? 'c' : 'w';
     const p2 = tryRotate(G.board, G.piece, dir);
     if (p2) {
       G.piece = p2;
@@ -1549,6 +1591,7 @@ function Game() {
 
   const hardDrop = () => {
     if (G.status !== 'playing' || !G.piece) return;
+    G.log += 'h';
     let n = 0;
     while (true) {
       const p2 = { ...G.piece, r: G.piece.r + 1 };
@@ -1589,7 +1632,6 @@ function Game() {
   const resume = () => {
     if (G.status !== 'paused') return;
     const d = Date.now() - G.pausedAt;
-    if (G.feverUntil > G.pausedAt) G.feverUntil += d;
     if (G.slowUntil > G.pausedAt) G.slowUntil += d;
     G.lockAt = 0;
     G.status = 'playing';
@@ -1597,7 +1639,7 @@ function Game() {
   };
 
   const usePower = (id) => {
-    if (G.status !== 'playing' || !G.piece || G.used[id]) return;
+    if (G.t === 'daily' || G.status !== 'playing' || !G.piece || G.used[id]) return;
     const isRock = (v) => v === ROCK || v === CRACK;
     if (id === 'crane') {
       G.slowUntil = Date.now() + 6000;
@@ -1643,7 +1685,7 @@ function Game() {
   };
 
   const speed = () =>
-    Math.max(110, G.base - Math.floor(G.placed / 8) * 30) * (Date.now() < G.slowUntil ? 2.5 : 1) * (Date.now() < G.feverUntil ? 1.8 : 1);
+    Math.max(110, G.base - Math.floor(G.placed / 8) * 30) * (Date.now() < G.slowUntil ? 2.5 : 1) * (G.feverPcs > 0 ? 1.8 : 1);
 
   useEffect(() => {
     alive.current = true;
@@ -1878,7 +1920,7 @@ function Game() {
         <View
           style={{
             height: 4,
-            width: `${Date.now() < G.feverUntil ? 100 : Math.min(100, G.fever)}%`,
+            width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`,
             backgroundColor: '#ffd23b',
           }}
         />
@@ -1896,7 +1938,7 @@ function Game() {
             return (
               <Pressable
                 key={o.id}
-                disabled={!owned || !!spent || G.status !== 'playing'}
+                disabled={!owned || !!spent || G.t === 'daily' || G.status !== 'playing'}
                 onPress={() => usePower(o.id)}
                 style={[
                   styles.chip,
@@ -1909,7 +1951,7 @@ function Game() {
           })}
         </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
-        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: Date.now() < G.feverUntil ? '#ffd23b' : T.border }]}>
+        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: G.feverPcs > 0 ? '#ffd23b' : T.border }]}>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
               {row.map((col, c) => (
