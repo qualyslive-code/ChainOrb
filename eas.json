@@ -28,5 +28,8 @@
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_za3YxnBct36Q_n8I-rniLg_o4u4C3tN"
       }
     }
+  },
+  "cli": {
+    "appVersionSource": "remote"
   }
 }
