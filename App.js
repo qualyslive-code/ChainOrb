@@ -153,7 +153,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v13';
+const VERSION = 'v14';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -1621,7 +1621,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 120) / COLS), Math.floor((height - 390) / ROWS))
+    Math.min(Math.floor((width - 16) / COLS), Math.floor((height - 320) / ROWS))
   );
 
   G.cell = cell;
@@ -1655,18 +1655,11 @@ function Game() {
       <StatusBar barStyle="light-content" />
 
       <View style={styles.hud}>
-        <View>
-          <Text style={styles.label}>SCORE</Text>
-          <Text style={styles.score}>{G.score}</Text>
-          <Text style={styles.small}>{goalText()}</Text>
-          {G.moves ? (
-            <Text style={[styles.small, { color: '#ffd23b' }]}>
-              {Math.max(0, G.moves - G.placed)} MOVES
-            </Text>
-          ) : null}
+        <View style={{flex:1}}>
+          <Text style={styles.hudScore}>{G.score}</Text>
+          <Text style={[styles.small,{color:T.accent}]}>{goalText()}{G.moves?`  ${Math.max(0,G.moves-G.placed)}mv`:''}</Text>
         </View>
         <View style={{ alignItems: 'center' }}>
-          <Text style={styles.label}>NEXT</Text>
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View>
               <Orb color={G.next.b} size={26} />
@@ -1679,22 +1672,12 @@ function Game() {
           </View>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.label}>LEVEL</Text>
-          <Text style={styles.score}>{G.level}</Text>
-          <Pressable
-            onPress={() => {
-              if (G.status === 'playing') {
-                logEvent('quit');
-                G.status = 'menu';
-                render();
-              }
-            }}
-          >
-            <Text style={styles.small}>☰ MENU</Text>
-          </Pressable>
-          <Pressable hitSlop={10} onPress={pause}>
-            <Text style={styles.small}>⏸ PAUSE</Text>
-          </Pressable>
+          <Text style={styles.hudScore}>LV{G.level}</Text>
+          <View style={{flexDirection:'row',gap:8,marginTop:2}}>
+            <Pressable hitSlop={10} onPress={pause}><Text style={styles.iconBtn}>{G.status==='paused'?'▶':'⏸'}</Text></Pressable>
+            <Pressable hitSlop={10} onPress={()=>{MUTED=!MUTED;AsyncStorage.setItem('muted',MUTED?'1':'0').catch(()=>{});render();}}><Text style={styles.iconBtn}>{MUTED?'🔇':'🔊'}</Text></Pressable>
+            <Pressable hitSlop={10} onPress={()=>{if(G.status==='playing'){logEvent('quit');G.status='menu';render();}}}><Text style={styles.iconBtn}>☰</Text></Pressable>
+          </View>
           {/* RESTART_BTN */}
           {(G.status === 'playing' || G.status === 'paused') && (
             <Pressable
@@ -1717,16 +1700,6 @@ function Game() {
               </Text>
             </Pressable>
           )}
-          <Pressable
-            hitSlop={10}
-            onPress={() => {
-              MUTED = !MUTED;
-              AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
-              render();
-            }}
-          >
-            <Text style={styles.small}>{MUTED ? '🔇 SOUND' : '🔊 SOUND'}</Text>
-          </Pressable>
         </View>
       </View>
 
@@ -1748,26 +1721,6 @@ function Game() {
         {G.status === 'menu' ? T.name : G.coach || T.name}
       </Text>
 
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <View style={{ width: 46, alignItems: 'center', paddingTop: 6 }}>
-          {ORBLINGS.map((o) => {
-            const owned = totalStars(G.stars) >= o.need;
-            const spent = G.used[o.id];
-            return (
-              <Pressable
-                key={o.id}
-                disabled={!owned || !!spent || G.status !== 'playing'}
-                onPress={() => usePower(o.id)}
-                style={[
-                  styles.chip,
-                  { borderColor: owned ? T.accent : '#2a2a4a', opacity: owned && !spent ? 1 : 0.35 },
-                ]}
-              >
-                <Text style={{ fontSize: 20 }}>{owned ? o.icon : '🥚'}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: Date.now() < G.feverUntil ? '#ffd23b' : T.border }]}>
           {display.map((row, r) => (
@@ -2123,9 +2076,20 @@ function Game() {
           )}
         </View>
       </Animated.View>
-        <View style={{ width: 46 }} />
-      </View>
 
+      <View style={styles.orbStrip}>
+        {ORBLINGS.map((o)=>{
+          const owned=totalStars(G.stars)>=o.need;
+          const spent=G.used[o.id];
+          return(
+            <Pressable key={o.id} disabled={!owned||!!spent||G.status!=='playing'} onPress={()=>usePower(o.id)}
+              style={[styles.orbChip,{borderColor:owned?T.accent:'#2a2a4a',opacity:owned&&!spent?1:0.3}]}>
+              <Text style={{fontSize:17}}>{owned?o.icon:'🥚'}</Text>
+              {owned&&!spent&&<Text style={{color:T.accent,fontSize:7,marginTop:1}}>{o.power.split(' ')[0].toUpperCase()}</Text>}
+            </Pressable>
+          );
+        })}
+      </View>
       <View style={styles.controls}>
         <View style={styles.row}>
           <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} />
@@ -2157,13 +2121,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: (StatusBar.currentHeight || 24) + 6,
   },
-  hud: {
-    width: '90%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
+  hud: { width:'100%', flexDirection:'row', justifyContent:'space-between', alignItems:'center', paddingHorizontal:10, marginBottom:4 },
+  hudScore: { color:'#fff', fontSize:22, fontWeight:'900' },
+  iconBtn: { color:'#8888aa', fontSize:15 },
   label: { color: '#6b6b8a', fontSize: 11, letterSpacing: 2 },
   score: { color: '#fff', fontSize: 28, fontWeight: '800' },
   small: { color: '#6b6b8a', fontSize: 12 },
@@ -2214,7 +2174,9 @@ const styles = StyleSheet.create({
   adTxt: { color: '#aaa', fontSize: 14, letterSpacing: 3 },
   adBig: { color: '#fff', fontSize: 64, fontWeight: '900' },
   coach: { fontSize: 11, letterSpacing: 2, height: 16, marginBottom: 2 },
-  bar: { width: '90%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
+  orbStrip: { flexDirection:'row', justifyContent:'space-evenly', width:'100%', paddingHorizontal:4, marginVertical:4 },
+  orbChip: { alignItems:'center', paddingHorizontal:8, paddingVertical:3, borderRadius:12, borderWidth:1.5, backgroundColor:'#14142a' },
+  bar: { width: '100%', height: 6, backgroundColor: '#1a1a30', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', width: '100%', marginTop: 10 },
   lvl: { width: 36, height: 42, margin: 3, borderRadius: 10, backgroundColor: '#1a1a30', borderWidth: 1, borderColor: '#2bff88', alignItems: 'center', justifyContent: 'center' },
@@ -2222,11 +2184,11 @@ const styles = StyleSheet.create({
   stars: { color: '#ffd23b', fontSize: 9, marginTop: 2 },
   bigStars: { color: '#ffd23b', fontSize: 34, marginTop: 8, letterSpacing: 4 },
   lvlTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  controls: { width: '94%', marginTop: 10 },
+  controls: { width:'100%', marginTop:2 },
   row: { flexDirection: 'row', marginVertical: 4 },
   btn: {
     flex: 1,
-    height: 64,
+    height: 52,
     marginHorizontal: 5,
     backgroundColor: 'rgba(255,255,255,0.07)',
     borderRadius: 22,
