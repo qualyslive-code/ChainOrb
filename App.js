@@ -1694,10 +1694,10 @@ function Game() {
   const start = (L) => {
     G.day = dateKey();
     RNG = L === 22 ? seeded(Number(G.day.replace(/-/g, ''))) : Math.random;
-    touchStreak();
+    if (!G.replay) touchStreak();
     const cfg = LEVELS[L - 1];
     G.level = L;
-    G.attempts[L] = (G.attempts[L] || 0) + 1;
+    if (!G.replay) G.attempts[L] = (G.attempts[L] || 0) + 1;
     G.startedAt = Date.now();
     G.card = null;
     G.cardSnap = null;
@@ -1969,7 +1969,7 @@ function Game() {
       } finally {
         G.rp = false;
       }
-      await sleep(ch === 'd' || ch === 'k' ? 110 : ch === 'h' ? 90 : 70);
+      await sleep((ch === 'd' || ch === 'k' ? 110 : ch === 'h' ? 90 : 70) * (5 / (G.rpSpeed || 5)));
     }
     await wait();
     if (live()) endReplay();
@@ -2799,9 +2799,21 @@ function Game() {
 
           {G.replay && (
             <View style={{ position: 'absolute', top: 6, left: 0, right: 0, alignItems: 'center' }}>
-              <Pressable onPress={endReplay} style={{ backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 }}>
-                <Text style={{ color: '#ffd23b', fontFamily: FONT, fontSize: 12, letterSpacing: 1 }}>▶ REPLAY {G.replay.name} {G.replay.score}  ✕ STOP</Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Pressable onPress={endReplay} style={{ backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14 }}>
+                  <Text style={{ color: '#ffd23b', fontFamily: FONT, fontSize: 12, letterSpacing: 1 }}>▶ REPLAY {G.replay.name} {G.replay.score}  ✕ STOP</Text>
+                </Pressable>
+                <Pressable
+                  hitSlop={6}
+                  onPress={() => {
+                    G.rpSpeed = (G.rpSpeed || 5) === 5 ? 1 : G.rpSpeed === 1 ? 2 : 5;
+                    render();
+                  }}
+                  style={{ marginLeft: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14 }}
+                >
+                  <Text style={{ color: '#fff', fontFamily: FONT, fontSize: 12 }}>{G.rpSpeed || 5}x</Text>
+                </Pressable>
+              </View>
             </View>
           )}
           {G.cd > 0 && (
