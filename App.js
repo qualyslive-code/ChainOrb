@@ -1466,6 +1466,7 @@ function FloatPad({ id, anchor, bounds, children }) {
   const pos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const base = useRef({ x: 0, y: 0 });
   const lastTap = useRef(0);
+  const [edit, setEdit] = useState(false);
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const place = (x, y) => {
     const nx = clamp(x, bounds.minX, bounds.maxX);
@@ -1493,6 +1494,9 @@ function FloatPad({ id, anchor, bounds, children }) {
           const now = Date.now();
           if (now - lastTap.current < 350) {
             base.current = place(0, 0);
+            setEdit(false);
+          } else {
+            setEdit((e) => !e);
           }
           lastTap.current = now;
         } else {
@@ -1507,10 +1511,11 @@ function FloatPad({ id, anchor, bounds, children }) {
       pointerEvents="box-none"
       style={[anchor === 'left' ? styles.padL : styles.padR, { transform: pos.getTranslateTransform() }]}
     >
-      <View {...pan.panHandlers} style={styles.grip}>
-        <Text style={styles.gripTxt}>⋮⋮⋮</Text>
+      <View {...pan.panHandlers} hitSlop={10} style={[styles.grip, edit && styles.gripOn]}>
+        <Text style={[styles.gripTxt, edit && { color: '#1a0f3a' }]}>{edit ? '✥ DRAG ME' : '⋮⋮⋮'}</Text>
       </View>
       {children}
+      {edit && <View {...pan.panHandlers} style={[ABS_FILL, styles.padEdit]} />}
     </Animated.View>
   );
 }
@@ -2671,6 +2676,7 @@ function Game() {
           </View>
           {ORBLINGS.map((o, i) => {
             const owned = totalStars(G.stars) >= o.need;
+            if (!owned) return null;
             const spent = G.used[o.id];
             return (
               <Pressable
@@ -3378,7 +3384,9 @@ const styles = StyleSheet.create({
   dropTxt: { fontSize: 17, fontFamily: FONT, letterSpacing: 1 },
   padL: { position: 'absolute', left: 8, bottom: BOTTOM_PAD, alignItems: 'flex-start' },
   padR: { position: 'absolute', right: 8, bottom: BOTTOM_PAD, alignItems: 'flex-end' },
-  grip: { alignSelf: 'center', paddingHorizontal: 22, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.28)', marginBottom: 2 },
+  grip: { alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.4)', marginBottom: 2 },
+  gripOn: { backgroundColor: 'rgba(255,210,59,0.95)' },
+  padEdit: { borderRadius: 18, borderWidth: 2, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.8)', backgroundColor: 'rgba(255,255,255,0.10)' },
   gripTxt: { color: 'rgba(255,255,255,0.85)', fontSize: 12, letterSpacing: 2, fontWeight: '900' },
   ico: { width: 38, height: 38, marginLeft: 6, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.38)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)', borderBottomWidth: 4, borderBottomColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   icoTxt: { color: '#fff', fontSize: 17 },
