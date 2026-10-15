@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated, ScrollView,
   useWindowDimensions, StatusBar, PanResponder, Share, Platform,
@@ -9,6 +9,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
 import { useFonts, Fredoka_700Bold } from '@expo-google-fonts/fredoka';
+import { Canvas, Group, Path, Circle, Rect, RoundedRect, Points, Shadow, Skia } from '@shopify/react-native-skia';
+import { useSharedValue, useDerivedValue, withTiming, withRepeat, interpolate, Easing as REasing } from 'react-native-reanimated';
 
 const FONT = 'Fredoka_700Bold';
 
@@ -900,6 +902,318 @@ function Orb({ color, size, popping, worry, active }) {
 }
 
 
+/* ============================== SKIA BOARD ============================== */
+// render-only: reads G and draws the playfield on one GPU canvas. never touches the engine.
+const USE_SKIA = true; // false = the old per-cell View renderer (kept for side-by-side comparison)
+
+const _pathCache = new Map();
+function _rr(x, y, w, h, tl, tr, br, bl) {
+  const f = Math.min(1, w / (tl + tr || 1), w / (bl + br || 1), h / (tl + bl || 1), h / (tr + br || 1));
+  tl *= f; tr *= f; br *= f; bl *= f;
+  const arc = (r, ex, ey) => (r > 0.01 ? `A${r} ${r} 0 0 1 ${ex} ${ey}` : `L${ex} ${ey}`);
+  return (
+    `M${x + tl} ${y}H${x + w - tr}${arc(tr, x + w, y + tr)}V${y + h - br}${arc(br, x + w - br, y + h)}` +
+    `H${x + bl}${arc(bl, x, y + h - bl)}V${y + tl}${arc(tl, x + tl, y)}Z`
+  );
+}
+function rrPath(x, y, w, h, rad) {
+  const key = [x, y, w, h, ...rad].map((n) => Math.round(n * 100)).join('|');
+  let p = _pathCache.get(key);
+  if (!p) {
+    p = Skia.Path.MakeFromSVGString(_rr(x, y, w, h, rad[0], rad[1], rad[2], rad[3]));
+    _pathCache.set(key, p);
+  }
+  return p;
+}
+function svgPath(d) {
+  let p = _pathCache.get(d);
+  if (!p) {
+    p = Skia.Path.MakeFromSVGString(d);
+    _pathCache.set(d, p);
+  }
+  return p;
+}
+// unit-size glyph shapes for the colour-blind markers, centred on 0,0
+const STAR_D = (() => {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const r = i % 2 ? 0.2 : 0.5;
+    pts.push(`${(Math.cos(a) * r).toFixed(3)} ${(Math.sin(a) * r).toFixed(3)}`);
+  }
+  return 'M' + pts.join('L') + 'Z';
+})();
+const GLYPH_D = [null, null, 'M0 -0.5L0.5 0.42L-0.5 0.42Z', 'M-0.42 -0.42H0.42V0.42H-0.42Z', 'M0 -0.55L0.5 0L0 0.55L-0.5 0Z', STAR_D];
+
+// one orb, drawn in its own 0..size box at (x, y). same look as the old Orb view.
+const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, active, sk }) {
+  const s = size;
+  const shape = sk === 'gel' && color >= 1 && color <= 5 ? color : 0;
+  const gemLike = sk === 'gem' || shape === 4;
+  const pad = s * 0.06;
+  const bw = color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? s * 0.14 : sk === 'candy' ? 3 : s * 0.05;
+  const w = s - pad * 2;
+  const rad =
+    gemLike ? [s * 0.2, s * 0.2, s * 0.2, s * 0.2]
+    : shape === 2 ? [s * 0.3, s * 0.3, s * 0.3, s * 0.3]
+    : shape === 3 ? [s * 0.5, s * 0.12, s * 0.5, s * 0.12]
+    : shape === 5 ? [s * 0.5, s * 0.5, s * 0.2, s * 0.2]
+    : [s, s, s, s];
+  const fill = popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : COLORS[color];
+  const edge =
+    color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color]
+    : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : 'rgba(0,0,0,0.35)';
+  const body = rrPath(pad, pad, w, w, rad);
+  const ring = rrPath(pad + bw / 2, pad + bw / 2, w - bw, w - bw, rad.map((r) => Math.max(0, r - bw / 2)));
+  const ox = pad + bw;
+  const iw = s - 2 * pad - 2 * bw;
+  const face = color >= 1 && color <= 5 && !gemLike;
+  const ew = s * (worry ? 0.2 : 0.13);
+  const eh = s * (popping ? 0.04 : worry ? 0.2 : 0.13);
+  const rowW = 2 * (ew + s * 0.12);
+  const ex = ox + (iw - rowW) / 2 + s * 0.06;
+  const ey = ox + s * 0.4;
+  const mw = s * 0.3;
+  const mh = s * 0.16;
+  const mx = ox + (iw - mw) / 2;
+  const my = ox + s * 0.5;
+  const gy = ox + (gemLike ? s * 0.3 : s * 0.62) + s * 0.13;
+  const gs = s * 0.2;
+  const gcol = sk === 'ring' ? COLORS[color] : 'rgba(20,20,42,0.6)';
+  const tf = [{ scale: popping ? 1.2 : 1 }, ...(gemLike ? [{ rotate: Math.PI / 4 }, { scale: 0.78 }] : [])];
+  return (
+    <Group transform={[{ translateX: x }, { translateY: y }]}>
+      <Group transform={tf} origin={{ x: s / 2, y: s / 2 }}>
+        <Path path={body} color={fill}>
+          <Shadow dx={0} dy={2} blur={active ? 7 : 2} color={active ? COLORS[color] : 'rgba(0,0,0,0.5)'} />
+        </Path>
+        <Path path={ring} style="stroke" strokeWidth={bw} color={edge} />
+        <RoundedRect x={ox + s * 0.12} y={ox + iw - s * 0.07 - s * 0.3} width={iw - s * 0.24} height={s * 0.3} r={s * 0.15} color="rgba(0,0,0,0.14)" />
+        <Group transform={[{ rotate: -Math.PI / 9 }]} origin={{ x: ox + s * 0.16 + s * 0.19, y: ox + s * 0.08 + s * 0.09 }}>
+          <RoundedRect x={ox + s * 0.16} y={ox + s * 0.08} width={s * 0.38} height={s * 0.18} r={s * 0.09} color="rgba(255,255,255,0.85)" />
+        </Group>
+        <Group transform={[{ rotate: -Math.PI / 9 }]} origin={{ x: ox + iw - s * 0.16 - s * 0.07, y: ox + iw - s * 0.14 - s * 0.04 }}>
+          <RoundedRect x={ox + iw - s * 0.16 - s * 0.14} y={ox + iw - s * 0.14 - s * 0.08} width={s * 0.14} height={s * 0.08} r={s * 0.04} color="rgba(255,255,255,0.28)" />
+        </Group>
+        <Path path={rrPath(ox + s * 0.065, ox + s * 0.065, iw - s * 0.13, iw - s * 0.13, [s, s, s, s])} style="stroke" strokeWidth={s * 0.07} color="rgba(0,0,0,0.12)" />
+        {face && (
+          <>
+            <RoundedRect x={ex} y={ey} width={ew} height={eh} r={Math.min(ew, eh) / 2} color="#14142a" />
+            <RoundedRect x={ex + ew + s * 0.12} y={ey} width={ew} height={eh} r={Math.min(ew, eh) / 2} color="#14142a" />
+          </>
+        )}
+        {face && popping && (
+          <>
+            <Path path={svgPath(`M${mx} ${my}L${mx + mw} ${my}A${mw / 2} ${mh} 0 0 1 ${mx} ${my}Z`)} color="rgba(255,120,140,0.9)" />
+            <Path path={svgPath(`M${mx} ${my}A${mw / 2} ${mh} 0 0 0 ${mx + mw} ${my}`)} style="stroke" strokeWidth={s * 0.04} color="#14142a" />
+          </>
+        )}
+        {color >= 1 && color <= 5 && (
+          <Group transform={[{ translateX: ox + iw / 2 }, { translateY: gy }, ...(gemLike ? [{ rotate: -Math.PI / 4 }] : []), { scale: gs }]}>
+            {color === 1 ? <Circle cx={0} cy={0} r={0.45} color={gcol} /> : <Path path={svgPath(GLYPH_D[color])} color={gcol} />}
+          </Group>
+        )}
+      </Group>
+    </Group>
+  );
+});
+
+// slide-in + landing squash for one orb. progress comes from one shared clock (ms), so the UI thread does the work
+function FallCell({ dist, cell, x, y, clock, children }) {
+  const slide = fallMs(dist);
+  const tf = useDerivedValue(() => {
+    'worklet';
+    const ms = clock.value;
+    const u = Math.min(1, ms / slide);
+    let sy = 1;
+    if (ms > slide) {
+      const t2 = ms - slide;
+      sy = t2 < 45 ? 1 - 0.18 * (t2 / 45) : 1 - 0.18 * Math.exp(-(t2 - 45) / 70) * Math.cos((t2 - 45) / 45);
+    }
+    return [{ translateY: -dist * cell * (1 - u * u) }, { scaleX: 1 + (1 - sy) * 0.55 }, { scaleY: sy }];
+  });
+  return (
+    <Group transform={tf} origin={{ x: x + cell / 2, y: y + cell }}>
+      {children}
+    </Group>
+  );
+}
+
+function ParticleLayer({ items, burst, cell }) {
+  const pts = useDerivedValue(() => {
+    'worklet';
+    const b = burst.value;
+    return items.map((p) => ({ x: p.x + p.dx * b, y: p.y + p.dy * b }));
+  });
+  const sw = useDerivedValue(() => {
+    'worklet';
+    return Math.max(0.5, cell * 0.2 * (1 - 0.7 * burst.value));
+  });
+  return <Points points={pts} mode="points" style="stroke" strokeWidth={sw} strokeCap="round" color={items[0].color} />;
+}
+
+function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, glow, piece, danger, playing, accent, sv }) {
+  const W = cell * COLS + 2;
+  const H = cell * ROWS + 2;
+  const { float, burst, flash, fallY, fall: fallClock } = sv;
+  const wob = useDerivedValue(() => {
+    'worklet';
+    return [{ translateY: cell * 0.02 * float.value }, { scaleY: 1 - 0.03 * float.value }];
+  });
+  const glowOp = useDerivedValue(() => {
+    'worklet';
+    return 0.1 + 0.12 * float.value;
+  });
+  const dangerOp = useDerivedValue(() => {
+    'worklet';
+    return 0.15 + 0.65 * float.value;
+  });
+  const pieceT = useDerivedValue(() => {
+    'worklet';
+    return [{ translateY: fallY.value }];
+  });
+  const partOp = useDerivedValue(() => {
+    'worklet';
+    return interpolate(burst.value, [0, 0.7, 1], [1, 0.9, 0]);
+  });
+  const ringOp = useDerivedValue(() => {
+    'worklet';
+    return interpolate(burst.value, [0, 1], [0.9, 0]);
+  });
+  const ringT = useDerivedValue(() => {
+    'worklet';
+    return [{ scale: 1 + 1.2 * burst.value }];
+  });
+  const dotA = useDerivedValue(() => {
+    'worklet';
+    return 0.08 + 0.14 * float.value;
+  });
+  const dotB = useDerivedValue(() => {
+    'worklet';
+    return 0.18 - 0.12 * float.value;
+  });
+  const dotAT = useDerivedValue(() => {
+    'worklet';
+    return [{ translateY: -18 * float.value }];
+  });
+  const dotBT = useDerivedValue(() => {
+    'worklet';
+    return [{ translateY: 14 * float.value }];
+  });
+
+  // particles: 5 per popped orb (first 16), grouped by colour so each colour is one animated Points node
+  const parts = useMemo(() => {
+    const byCol = new Map();
+    rings.slice(0, 16).forEach((o) => {
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + (o.r * 7 + o.c * 3) * 0.5;
+        const d = cell * (0.9 + (i % 2) * 0.35);
+        const item = { x: o.c * cell + cell / 2, y: o.r * cell + cell / 2, dx: Math.cos(a) * d, dy: Math.sin(a) * d + cell * 0.3, color: COLORS[o.col] };
+        if (!byCol.has(o.col)) byCol.set(o.col, []);
+        byCol.get(o.col).push(item);
+      }
+    });
+    return [...byCol.entries()];
+  }, [rings, cell]);
+
+  const dots = (even) =>
+    [0, 1, 2, 3, 4, 5]
+      .filter((i) => (i % 2 === 0) === even)
+      .map((i) => ({ x: (W * (12 + i * 15)) / 100, y: (H * (10 + ((i * 37) % 70))) / 100 }));
+
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}>
+      <Group transform={[{ translateX: 2 }, { translateY: 2 }]}>
+        {board.map((row, r) =>
+          row.map((col, c) => {
+            if (!col) return null;
+            const k = r * COLS + c;
+            const x = c * cell;
+            const y = r * cell;
+            const pop = popping.has(k);
+            const orb = <OrbSk color={col} size={cell} x={x} y={y} popping={pop} worry={danger} sk={col >= 1 && col <= 5 ? skin : 'gel'} />;
+            const fd = fall ? fall.get(k) : 0;
+            if (fd) {
+              return (
+                <FallCell key={`f${k}-${fallId}`} dist={fd} cell={cell} x={x} y={y} clock={fallClock}>
+                  {orb}
+                </FallCell>
+              );
+            }
+            if (pop) return <Group key={k}>{orb}</Group>;
+            return (
+              <Group key={k} transform={wob} origin={{ x: x + cell / 2, y: y + cell / 2 }}>
+                {orb}
+              </Group>
+            );
+          })
+        )}
+      </Group>
+
+      {Array.from({ length: ROWS - 1 }, (_, i) => (
+        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,255,255,0.04)" />
+      ))}
+      {Array.from({ length: COLS - 1 }, (_, i) => (
+        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,255,255,0.04)" />
+      ))}
+
+      <Group opacity={glowOp}>
+        {[...glow].map((k) => {
+          const gr = Math.floor(k / COLS);
+          const gc = k % COLS;
+          if (popping.has(k) || !board[gr][gc]) return null;
+          return <Circle key={`gl${k}`} cx={2 + gc * cell + cell / 2} cy={2 + gr * cell + cell / 2} r={cell * 0.42} color={COLORS[board[gr][gc]]} />;
+        })}
+      </Group>
+
+      {ghost.map(([r, c, col]) => (
+        <Circle key={`g${r}-${c}`} cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.38 - 1} style="stroke" strokeWidth={2} color={COLORS[col]} opacity={0.4} />
+      ))}
+
+      <RoundedRect x={0} y={0} width={W} height={H} r={10} color={accent} opacity={flash} />
+
+      {piece && (
+        <Group transform={pieceT}>
+          {cellsOf(piece).map(([r, c, col], i) =>
+            r >= 0 && r < ROWS && c >= 0 && c < COLS ? (
+              <OrbSk key={i} color={col} size={cell} x={2 + c * cell} y={2 + r * cell} worry={danger} active sk={col >= 1 && col <= 5 ? skin : 'gel'} />
+            ) : null
+          )}
+        </Group>
+      )}
+
+      {danger && playing && (
+        <RoundedRect x={1.5} y={1.5} width={W - 3} height={H - 3} r={10} style="stroke" strokeWidth={3} color="#ff3b6b" opacity={dangerOp} />
+      )}
+
+      <Group transform={[{ translateX: 2 }, { translateY: 2 }]} opacity={partOp}>
+        {parts.map(([col, items]) => (
+          <ParticleLayer key={col} items={items} burst={burst} cell={cell} />
+        ))}
+      </Group>
+
+      <Group opacity={ringOp}>
+        {rings.map((o) => (
+          <Group key={`${o.r}-${o.c}`} transform={ringT} origin={{ x: 2 + o.c * cell + cell / 2, y: 2 + o.r * cell + cell / 2 }}>
+            <Circle cx={2 + o.c * cell + cell / 2} cy={2 + o.r * cell + cell / 2} r={cell / 2 - 1.5} style="stroke" strokeWidth={3} color={COLORS[o.col]} />
+          </Group>
+        ))}
+      </Group>
+
+      {playing && (
+        <>
+          <Group opacity={dotA} transform={dotAT}>
+            <Points points={dots(true)} mode="points" style="stroke" strokeWidth={3} strokeCap="round" color={accent} />
+          </Group>
+          <Group opacity={dotB} transform={dotBT}>
+            <Points points={dots(false)} mode="points" style="stroke" strokeWidth={3} strokeCap="round" color={accent} />
+          </Group>
+        </>
+      )}
+    </Canvas>
+  );
+}
+
 function Scene({ realm, width, height }) {
   const W = width;
   const tri = (left, base, h, color, bottom = 0) => ({
@@ -1270,6 +1584,18 @@ function Game() {
   const flash = useRef(new Animated.Value(0)).current;
   const punch = useRef(new Animated.Value(1)).current;
   const fallY = useRef(new Animated.Value(0)).current;
+  // Skia twins of burst/float/flash/fallY, plus one ms clock for orb falls (UI thread, no JS per frame)
+  const svFloat = useSharedValue(0);
+  const svBurst = useSharedValue(0);
+  const svFlash = useSharedValue(0);
+  const svFallY = useSharedValue(0);
+  const svFall = useSharedValue(1e6);
+  // engine-side hooks go through G.fx so the extracted engine code (Harness.mjs) never sees Skia
+  G.fx = {
+    burst() { svBurst.value = 0; svBurst.value = withTiming(1, { duration: 280 }); },
+    fallY(px) { svFallY.value = -px; svFallY.value = withTiming(0, { duration: 90 }); },
+    fall(max) { const T = fallMs(max) + 300; svFall.value = 0; svFall.value = withTiming(T, { duration: T, easing: REasing.linear }); },
+  };
   const bannerScale = useRef(new Animated.Value(0)).current;
   const np = () => {
     if (G.seq && G.seq.length) {
@@ -1336,6 +1662,8 @@ function Game() {
   const doFlash = (power) => {
     flash.setValue(power);
     Animated.timing(flash, { toValue: 0, duration: 520, useNativeDriver: true }).start();
+    svFlash.value = power;
+    svFlash.value = withTiming(0, { duration: 520 });
   };
 
   const doPunch = () => {
@@ -1706,6 +2034,7 @@ function Game() {
       if (gravity(G.board)) {
         G.fall = fm.m;
         G.fallId = (G.fallId || 0) + 1;
+        if (G.fx) G.fx.fall(fm.max);
         render();
         await sleep(Math.max(130, fallMs(fm.max) + 110));
         G.fall = null;
@@ -1755,6 +2084,7 @@ function Game() {
       if (big.length >= 6) await sleep(60);
       burst.setValue(0);
       Animated.timing(burst, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+      if (G.fx) G.fx.burst();
       if (G.chain >= 3) {
         doShake(Math.min(4 + G.chain * 2, 16));
         // wave of light; at x7 and above the whole world flares
@@ -1835,6 +2165,7 @@ function Game() {
         gravity(G.board);
         G.fall = fm2.m;
         G.fallId = (G.fallId || 0) + 1;
+        if (G.fx) G.fx.fall(fm2.max);
         render();
         await sleep(Math.max(150, fallMs(fm2.max) + 110));
         G.fall = null;
@@ -1902,6 +2233,7 @@ function Game() {
       G.lockAt = 0;
       fallY.setValue(-(G.cell || 30));
       Animated.timing(fallY, { toValue: 0, duration: 90, useNativeDriver: true }).start();
+      if (G.fx) G.fx.fallY(G.cell || 30);
       render();
       return true;
     }
@@ -2127,6 +2459,7 @@ function Game() {
         Animated.timing(float, { toValue: 0, duration: 2600, useNativeDriver: true }),
       ])
     ).start();
+    svFloat.value = withRepeat(withTiming(1, { duration: 2600, easing: REasing.inOut(REasing.ease) }), -1, true);
     let t;
     const loop = () => {
       if (!G.replay) step();
@@ -2349,6 +2682,15 @@ function Game() {
         </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: T.board, borderColor: G.feverPcs > 0 ? '#ffd23b' : T.border }]}>
+          {USE_SKIA && (
+            <BoardCanvas
+              board={display} cell={cell} skin={SKIN} popping={G.popping} fall={G.fall} fallId={G.fallId || 0}
+              rings={G.rings} ghost={ghost} glow={glowSet} piece={G.piece} danger={danger}
+              playing={G.status === 'playing'} accent={T.accent}
+              sv={{ float: svFloat, burst: svBurst, flash: svFlash, fallY: svFallY, fall: svFall }}
+            />
+          )}
+          {!USE_SKIA && (<>
           {display.map((row, r) => (
             <View key={r} style={{ flexDirection: 'row' }}>
               {row.map((col, c) => {
@@ -2468,6 +2810,8 @@ function Game() {
             />
           )}
 
+          </>)}
+
           {(G.popups || []).map((o) => (
             <ScorePopup key={o.id} r={o.r} c={o.c} pts={o.pts} cell={cell} color={COLORS[G.board[Math.round(o.r)] && G.board[Math.round(o.r)][Math.round(o.c)] || 1]} />
           ))}
@@ -2485,6 +2829,7 @@ function Game() {
             </View>
           )}
 
+          {!USE_SKIA && (<>
           {G.rings.slice(0, 16).map((o) => [0, 1, 2, 3, 4].map((i) => {
             const a = (i / 5) * Math.PI * 2 + (o.r * 7 + o.c * 3) * 0.5;
             const d = cell * (0.9 + (i % 2) * 0.35);
@@ -2549,6 +2894,8 @@ function Game() {
               }}
             />
           ))}
+
+          </>)}
 
           {G.banner ? (
             <View style={styles.bannerWrap} pointerEvents="none">
