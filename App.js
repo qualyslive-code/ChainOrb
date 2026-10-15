@@ -1613,10 +1613,12 @@ function Game() {
   const svFallY = useSharedValue(0);
   const svFall = useSharedValue(1e6);
   const menuScroll = useRef(null);
+  const cheer = useRef(new Animated.Value(0)).current; // Orbling hop on big chains
   const menuViewH = useRef(0);
   // engine-side hooks go through G.fx so the extracted engine code (Harness.mjs) never sees Skia
   G.fx = {
     burst() { svBurst.value = 0; svBurst.value = withTiming(1, { duration: 280 }); },
+    cheer() { cheer.setValue(0); Animated.timing(cheer, { toValue: 1, duration: 800, easing: Easing.linear, useNativeDriver: true }).start(); },
     fallY(px) { svFallY.value = -px; svFallY.value = withTiming(0, { duration: 90 }); },
     fall(max) { const T = fallMs(max) + 300; svFall.value = 0; svFall.value = withTiming(T, { duration: T, easing: REasing.linear }); },
   };
@@ -2109,6 +2111,7 @@ function Game() {
       burst.setValue(0);
       Animated.timing(burst, { toValue: 1, duration: 280, useNativeDriver: true }).start();
       if (G.fx) G.fx.burst();
+      if (G.fx && G.chain >= 3) G.fx.cheer();
       if (G.chain >= 3) {
         doShake(Math.min(4 + G.chain * 2, 16));
         // wave of light; at x7 and above the whole world flares
@@ -2658,7 +2661,7 @@ function Game() {
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
         <View style={{ width: 46, alignItems: 'center', paddingTop: 6 }}>
-          {ORBLINGS.map((o) => {
+          {ORBLINGS.map((o, i) => {
             const owned = totalStars(G.stars) >= o.need;
             const spent = G.used[o.id];
             return (
@@ -2671,7 +2674,19 @@ function Game() {
                   { borderColor: owned ? T.accent : '#2a2a4a', opacity: owned && !spent ? 1 : 0.7 },
                 ]}
               >
-                <Text style={{ fontSize: 20 }}>{owned ? o.icon : '🥚'}</Text>
+                <Animated.Text
+                  style={{
+                    fontSize: 20,
+                    transform: owned
+                      ? [
+                          { translateY: cheer.interpolate({ inputRange: [0, 0.02 + i * 0.08, 0.22 + i * 0.08, 0.42 + i * 0.08, 1], outputRange: [0, 0, -14, 0, 0] }) },
+                          { scale: cheer.interpolate({ inputRange: [0, 0.02 + i * 0.08, 0.22 + i * 0.08, 0.42 + i * 0.08, 1], outputRange: [1, 1, 1.3, 1, 1] }) },
+                        ]
+                      : [],
+                  }}
+                >
+                  {owned ? o.icon : '🥚'}
+                </Animated.Text>
               </Pressable>
             );
           })}
