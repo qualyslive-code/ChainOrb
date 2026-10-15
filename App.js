@@ -1152,11 +1152,14 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
       </Group>
 
       {Array.from({ length: ROWS - 1 }, (_, i) => (
-        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,255,255,0.04)" />
+        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,255,255,0.08)" />
       ))}
       {Array.from({ length: COLS - 1 }, (_, i) => (
-        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,255,255,0.04)" />
+        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,255,255,0.08)" />
       ))}
+      <Rect x={1.5} y={2} width={1.5} height={H - 4} color="rgba(255,255,255,0.16)" />
+      <Rect x={W - 3} y={2} width={1.5} height={H - 4} color="rgba(255,255,255,0.16)" />
+      <Rect x={2} y={H - 3} width={W - 4} height={1.5} color="rgba(255,255,255,0.16)" />
 
       <Group opacity={glowOp}>
         {[...glow].map((k) => {
@@ -1438,6 +1441,10 @@ try {
 } catch (e) {}
 const BOTTOM_PAD = SAFE_BOTTOM != null ? SAFE_BOTTOM + 14 : Platform.OS === 'android' ? 52 : 24;
 const CONTROLS_H = 86; // strip under the board that holds the buttons (grip + one row)
+const STATUS_H = (StatusBar.currentHeight || 24) + 6; // same as styles.root paddingTop
+const RAIL_W = 46; // left rail: NEXT + orblings
+const DIM = 'rgba(14,9,42,0.22)'; // light tint over the scene art
+const BOARD_BACK = 'rgba(10,6,34,0.30)'; // glass backing behind the columns so orbs stay readable on the art
 const BOARD_BG = '#130e2e';
 
 const hex2rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -1467,7 +1474,7 @@ function FloatPad({ id, anchor, bounds, children }) {
     return { x: nx, y: ny };
   };
   useEffect(() => {
-    AsyncStorage.getItem('pad2_' + id)
+    AsyncStorage.getItem('pad3_' + id)
       .then((v) => {
         if (!v) return;
         const o = JSON.parse(v);
@@ -1491,7 +1498,7 @@ function FloatPad({ id, anchor, bounds, children }) {
         } else {
           base.current = place(base.current.x + g.dx, base.current.y + g.dy);
         }
-        AsyncStorage.setItem('pad2_' + id, JSON.stringify(base.current)).catch(() => {});
+        AsyncStorage.setItem('pad3_' + id, JSON.stringify(base.current)).catch(() => {});
       },
     })
   ).current;
@@ -2503,7 +2510,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 66) / COLS), Math.floor((height - 200 - BOTTOM_PAD - CONTROLS_H) / ROWS))
+    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - 8) / ROWS))
   );
 
   G.cell = cell;
@@ -2591,75 +2598,77 @@ function Game() {
         ))}
       </View>
 
-      <View style={styles.hud}>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-          <View style={styles.badge}>
-            <Text style={styles.badgeLbl}>LV</Text>
-            <Text style={styles.badgeNum}>{G.level}</Text>
-          </View>
-          <View style={{ flex: 1, marginLeft: 6 }}>
-            <View style={styles.stat}>
-              <View style={[styles.statFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
-              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>{goalText()}</Text>
-            </View>
-            <View style={[styles.stat, { marginTop: 4 }]}>
-              <View style={[styles.statFill, { width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`, backgroundColor: '#ffb020' }]} />
-              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>
-                {G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER'}
-              </Text>
-            </View>
-          </View>
+      <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: DIM }]} />
+
+      <View style={[styles.hudL, { top: STATUS_H - 2 }]}>
+        <View style={styles.badge}>
+          <Text style={styles.badgeLbl}>LV</Text>
+          <Text style={styles.badgeNum}>{G.level}</Text>
         </View>
-        <View style={styles.nextBox}>
-          <View>
-            <Orb color={G.next.b} size={30} />
-            <Orb color={G.next.a} size={30} />
+        <View style={{ width: 78, marginLeft: 5 }}>
+          <View style={styles.stat}>
+            <View style={[styles.statFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>{goalText()}</Text>
           </View>
-          <View style={{ marginLeft: 4, marginTop: 6, opacity: 0.6 }}>
-            <Orb color={G.next2.b} size={22} />
-            <Orb color={G.next2.a} size={22} />
-          </View>
-        </View>
-        <View style={{ alignItems: 'flex-end', marginLeft: 6 }}>
-          <View style={styles.pill}>
-            <Text style={styles.pillLbl}>SCORE</Text>
-            <Text style={styles.pillNum}>{G.score}</Text>
-          </View>
-          <View style={{ flexDirection: 'row', marginTop: 4 }}>
-            <View style={[styles.pill, { marginRight: 4 }]}>
-              <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
-              <Text style={styles.pillNum}>{G.shards}</Text>
-            </View>
-            <View style={styles.pill}>
-              <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
-              <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', marginTop: 4 }}>
-            <Pressable hitSlop={8} style={styles.ico} onPress={pause}>
-              <Text style={styles.icoTxt}>⏸</Text>
-            </Pressable>
-            <Pressable
-              hitSlop={8}
-              style={styles.ico}
-              onPress={() => {
-                MUTED = !MUTED;
-                AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
-                render();
-              }}
-            >
-              <Text style={styles.icoTxt}>{MUTED ? '🔇' : '🔊'}</Text>
-            </Pressable>
+          <View style={[styles.stat, { marginTop: 4 }]}>
+            <View style={[styles.statFill, { width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`, backgroundColor: '#ffb020' }]} />
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>
+              {G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER'}
+            </Text>
           </View>
         </View>
       </View>
 
-      <Text style={[styles.coach, { color: '#fff', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 }]}>
-        {G.status === 'menu' ? T.name : G.coach || T.name}
-      </Text>
+      <View style={[styles.hudR, { top: STATUS_H - 2 }]}>
+        <View style={styles.pill}>
+          <Text style={styles.pillLbl}>SCORE</Text>
+          <Text style={styles.pillNum}>{G.score}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', marginTop: 4 }}>
+          <View style={[styles.pill, { marginRight: 4 }]}>
+            <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
+            <Text style={styles.pillNum}>{G.shards}</Text>
+          </View>
+          <View style={styles.pill}>
+            <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
+            <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: 'row', marginTop: 6 }}>
+          <Pressable hitSlop={8} style={styles.ico} onPress={pause}>
+            <Text style={styles.icoTxt}>⏸</Text>
+          </Pressable>
+          <Pressable
+            hitSlop={8}
+            style={styles.ico}
+            onPress={() => {
+              MUTED = !MUTED;
+              AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
+              render();
+            }}
+          >
+            <Text style={styles.icoTxt}>{MUTED ? '🔇' : '🔊'}</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {G.status !== 'menu' && !!G.coach && (
+        <Text pointerEvents="none" style={[styles.coachFloat, { top: STATUS_H + 120 + cell * 2 }]}>
+          {G.coach}
+        </Text>
+      )}
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <View style={{ width: 46, alignItems: 'center', paddingTop: 6 }}>
+        <View style={{ position: 'absolute', left: 6, top: 52, width: RAIL_W, alignItems: 'center', zIndex: 5 }}>
+          <View style={styles.nextRail}>
+            <Text style={styles.nextLbl}>NEXT</Text>
+            <Orb color={G.next.b} size={28} />
+            <Orb color={G.next.a} size={28} />
+            <View style={{ marginTop: 4, opacity: 0.55 }}>
+              <Orb color={G.next2.b} size={20} />
+              <Orb color={G.next2.a} size={20} />
+            </View>
+          </View>
           {ORBLINGS.map((o, i) => {
             const owned = totalStars(G.stars) >= o.need;
             const spent = G.used[o.id];
@@ -2691,7 +2700,7 @@ function Game() {
           })}
         </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
-        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: BOARD_BG, borderColor: G.feverPcs > 0 ? '#ffd23b' : T.border, elevation: 10, shadowColor: '#000' }]}>
+        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: BOARD_BACK, borderColor: G.feverPcs > 0 ? '#ffd23b' : 'transparent' }]}>
           {USE_SKIA && (
             <BoardCanvas
               board={display} cell={cell} skin={SKIN} popping={G.popping} fall={G.fall} fallId={G.fallId || 0}
@@ -3216,18 +3225,18 @@ function Game() {
       </Animated.View>
       </View>
 
-      <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - 190, minY: -(height - 230), maxY: 0 }}>
-        <View style={{ flexDirection: 'row' }}>
-          <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={styles.fbtn} />
-          <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={styles.fbtn} />
-          <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={styles.fbtn} />
+      <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - 150, minY: -(height - 230), maxY: 0 }}>
+        <View style={styles.dpad}>
+          <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={[styles.dArm, { left: 6, top: 43 }]} />
+          <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={[styles.dArm, { right: 6, top: 43 }]} />
+          <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={[styles.dArm, { left: 43, bottom: 6 }]} />
         </View>
       </FloatPad>
       <FloatPad id="R" anchor="right" bounds={{ minX: -(width - 170), maxX: 0, minY: -(height - 260), maxY: 0 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} style={styles.fbtn} />
-          <HoldButton dim={G.status !== 'playing'} label="⟳" onPress={() => rotate(1)} style={styles.fbtn} />
-          <HoldButton dim={G.status !== 'playing'} label="DROP" onPress={hardDrop} style={styles.fdrop} textStyle={styles.dropTxt} />
+        <View style={styles.acts}>
+          <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} style={[styles.act, { left: 0, bottom: 4, width: 52, height: 52, borderRadius: 26 }]} textStyle={{ fontSize: 24 }} />
+          <HoldButton dim={G.status !== 'playing'} label={'⟳\nTURN'} onPress={() => rotate(1)} style={[styles.act, { right: 8, top: 0, width: 60, height: 60, borderRadius: 30 }]} textStyle={styles.actTxt} />
+          <HoldButton dim={G.status !== 'playing'} label={'▼\nDROP'} onPress={hardDrop} style={[styles.act, styles.actDrop, { right: 0, bottom: 0, width: 76, height: 76, borderRadius: 38 }]} textStyle={styles.actTxt} />
         </View>
       </FloatPad>
       {G.ad && (
@@ -3247,13 +3256,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a14',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 4,
     paddingTop: (StatusBar.currentHeight || 24) + 6,
   },
   hud: {
     width: '96%',
+    height: 42,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     marginBottom: 8,
   },
   label: { color: 'rgba(255,255,255,0.95)', fontSize: 13, fontFamily: FONT, letterSpacing: 0.5, textShadowColor: 'rgba(20,10,60,0.85)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
@@ -3308,17 +3319,29 @@ const styles = StyleSheet.create({
   coach: { fontSize: 13, fontFamily: FONT, letterSpacing: 0.5, height: 18, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: 'rgba(0,0,0,0.30)', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
-  badge: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(20,10,60,0.6)', borderWidth: 3, borderColor: '#ffd23b', alignItems: 'center', justifyContent: 'center' },
-  badgeLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 10, lineHeight: 11 },
-  badgeNum: { color: '#fff', fontFamily: FONT, fontSize: 22, lineHeight: 24, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
-  stat: { height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden', justifyContent: 'center' },
+  badge: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(20,10,60,0.6)', borderWidth: 3, borderColor: '#ffd23b', alignItems: 'center', justifyContent: 'center' },
+  badgeLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 9, lineHeight: 10 },
+  badgeNum: { color: '#fff', fontFamily: FONT, fontSize: 21, lineHeight: 23, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
+  stat: { height: 18, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden', justifyContent: 'center' },
   statFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
-  statTxt: { color: '#fff', fontFamily: FONT, fontSize: 11, textAlign: 'center', paddingHorizontal: 4, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
-  pill: { flexDirection: 'row', alignItems: 'center', height: 28, paddingHorizontal: 8, borderRadius: 14, backgroundColor: 'rgba(20,10,60,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
-  pillLbl: { color: 'rgba(255,255,255,0.75)', fontFamily: FONT, fontSize: 10, marginRight: 5 },
+  statTxt: { color: '#fff', fontFamily: FONT, fontSize: 10, textAlign: 'center', paddingHorizontal: 4, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
+  pill: { flexDirection: 'row', alignItems: 'center', height: 26, paddingHorizontal: 8, borderRadius: 14, backgroundColor: 'rgba(20,10,60,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
+  pillLbl: { color: 'rgba(255,255,255,0.75)', fontFamily: FONT, fontSize: 9, marginRight: 4 },
   pillIco: { fontSize: 14, marginRight: 4 },
   pillNum: { color: '#fff', fontFamily: FONT, fontSize: 15, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
   comboLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 14, letterSpacing: 2, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
+  hudL: { position: 'absolute', left: 8, flexDirection: 'row', alignItems: 'center' },
+  hudR: { position: 'absolute', right: 8, alignItems: 'flex-end' },
+  dpad: { width: 128, height: 128, borderRadius: 64, backgroundColor: 'rgba(255,255,255,0.10)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.38)' },
+  dArm: { position: 'absolute', flex: 0, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)', borderBottomWidth: 2, borderBottomColor: 'rgba(255,255,255,0.55)' },
+  acts: { width: 156, height: 130 },
+  act: { position: 'absolute', flex: 0, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.6)', borderBottomWidth: 2.5, borderBottomColor: 'rgba(255,255,255,0.6)' },
+  actDrop: { backgroundColor: 'rgba(255,59,107,0.45)', borderColor: 'rgba(255,208,220,0.9)', borderBottomColor: 'rgba(255,208,220,0.9)' },
+  actTxt: { fontFamily: FONT, fontWeight: 'normal', fontSize: 14, lineHeight: 17, textAlign: 'center', textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
+  railBtn: { width: 36, height: 36, marginBottom: 6, borderRadius: 18, backgroundColor: 'rgba(25,12,70,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.45)', borderBottomWidth: 4, borderBottomColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  nextRail: { width: 42, alignItems: 'center', paddingVertical: 4, marginBottom: 8, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)' },
+  nextLbl: { color: 'rgba(255,255,255,0.8)', fontFamily: FONT, fontSize: 8, marginBottom: 2 },
+  coachFloat: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#fff', fontFamily: FONT, fontSize: 14, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 2 },
   nextBox: { flexDirection: 'row', alignItems: 'flex-start', padding: 6, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)' },
   goalRow: { width: '90%', flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   goalTrack: { flex: 1, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.42)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden' },
