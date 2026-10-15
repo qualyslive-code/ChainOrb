@@ -1440,6 +1440,7 @@ try {
   if (m && m.insets) SAFE_BOTTOM = m.insets.bottom;
 } catch (e) {}
 const BOTTOM_PAD = SAFE_BOTTOM != null ? SAFE_BOTTOM + 14 : Platform.OS === 'android' ? 52 : 24;
+const BOARD_BOTTOM = Math.max(4, BOTTOM_PAD - 10); // keeps the last row clear of the system nav bar
 const CONTROLS_H = 86; // strip under the board that holds the buttons (grip + one row)
 const STATUS_H = (StatusBar.currentHeight || 24) + 6; // same as styles.root paddingTop
 const RAIL_W = 46; // left rail: NEXT + orblings
@@ -2515,7 +2516,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - 8) / ROWS))
+    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - BOARD_BOTTOM - 12) / ROWS))
   );
 
   G.cell = cell;
@@ -3263,7 +3264,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0a0a14',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    paddingBottom: 4,
+    paddingBottom: BOARD_BOTTOM,
     paddingTop: (StatusBar.currentHeight || 24) + 6,
   },
   hud: {
