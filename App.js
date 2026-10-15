@@ -204,6 +204,7 @@ const dateSeed = () => Number(dateKey().replace(/-/g, ''));
 let lastAdAt = 0;
 const adDue = (L) => (L === 6 || L === 9 || (L >= 12 && L % 2 === 0)) && Date.now() - lastAdAt > 120000;
 
+const CHEST_SHARDS = 1; // daily chest reward: flat on purpose (shards only buy cosmetic skins)
 // free orb skins, earned with shards from daily missions
 let SKIN = 'gel';
 const SKINS = [
@@ -3014,7 +3015,9 @@ function Game() {
                       onPress={() => {
                         if (G.chestDay === dateKey()) return;
                         G.chestDay = dateKey();
-                        G.shards += 1;
+                        G.shards += CHEST_SHARDS;
+                        G.chestFlash = Date.now();
+                        setTimeout(() => render(), 1700);
                         saveMeta();
                         AsyncStorage.setItem('chestDay', G.chestDay).catch(() => {});
                         jingle([4, 6, 9], 70);
@@ -3022,7 +3025,7 @@ function Game() {
                       }}
                       style={[styles.modeBtn, { borderColor: '#ff8a3b', opacity: G.chestDay === dateKey() ? 0.5 : 1 }]}
                     >
-                      <Text style={styles.modeTxt}>{G.chestDay === dateKey() ? '🎁 OPENED ✓' : '🎁 DAILY CHEST'}</Text>
+                      <Text style={styles.modeTxt}>{Date.now() - (G.chestFlash || 0) < 1600 ? `🎁 +${CHEST_SHARDS} ◆` : G.chestDay === dateKey() ? '🎁 OPENED ✓' : '🎁 DAILY CHEST'}</Text>
                     </Pressable>
                     <Pressable
                       onPress={() => {
