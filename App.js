@@ -1413,10 +1413,11 @@ function ScorePopup({ r, c, pts, cell }) {
         width: cell * 1.6,
         textAlign: 'center',
         color: '#ffd23b',
-        fontSize: cell * 0.36,
-        fontWeight: '900',
-        textShadowColor: '#ff8a3b',
-        textShadowRadius: 6,
+        fontSize: cell * 0.42,
+        fontFamily: FONT,
+        textShadowColor: 'rgba(90,40,0,0.95)',
+        textShadowOffset: { width: 0, height: 2 },
+        textShadowRadius: 1,
         opacity: op,
         transform: [{ translateY: y }],
         zIndex: 99,
@@ -2591,32 +2592,49 @@ function Game() {
       </View>
 
       <View style={styles.hud}>
-        <View>
-          <Text style={styles.label}>SCORE</Text>
-          <Text style={styles.score}>{G.score}</Text>
-          <Text style={styles.small}>{goalText()}</Text>
-          {G.moves ? (
-            <Text style={[styles.small, { color: '#ffd23b' }]}>
-              {Math.max(0, G.moves - G.placed)} MOVES
-            </Text>
-          ) : null}
-        </View>
-        <View style={{ alignItems: 'center' }}>
-          <Text style={styles.label}>NEXT</Text>
-          <View style={styles.nextBox}>
-            <View>
-              <Orb color={G.next.b} size={34} />
-              <Orb color={G.next.a} size={34} />
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+          <View style={styles.badge}>
+            <Text style={styles.badgeLbl}>LV</Text>
+            <Text style={styles.badgeNum}>{G.level}</Text>
+          </View>
+          <View style={{ flex: 1, marginLeft: 6 }}>
+            <View style={styles.stat}>
+              <View style={[styles.statFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>{goalText()}</Text>
             </View>
-            <View style={{ marginLeft: 6, marginTop: 8, opacity: 0.6 }}>
-              <Orb color={G.next2.b} size={26} />
-              <Orb color={G.next2.a} size={26} />
+            <View style={[styles.stat, { marginTop: 4 }]}>
+              <View style={[styles.statFill, { width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`, backgroundColor: '#ffb020' }]} />
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>
+                {G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER'}
+              </Text>
             </View>
           </View>
         </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.label}>LEVEL</Text>
-          <Text style={styles.score}>{G.level}</Text>
+        <View style={styles.nextBox}>
+          <View>
+            <Orb color={G.next.b} size={30} />
+            <Orb color={G.next.a} size={30} />
+          </View>
+          <View style={{ marginLeft: 4, marginTop: 6, opacity: 0.6 }}>
+            <Orb color={G.next2.b} size={22} />
+            <Orb color={G.next2.a} size={22} />
+          </View>
+        </View>
+        <View style={{ alignItems: 'flex-end', marginLeft: 6 }}>
+          <View style={styles.pill}>
+            <Text style={styles.pillLbl}>SCORE</Text>
+            <Text style={styles.pillNum}>{G.score}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', marginTop: 4 }}>
+            <View style={[styles.pill, { marginRight: 4 }]}>
+              <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
+              <Text style={styles.pillNum}>{G.shards}</Text>
+            </View>
+            <View style={styles.pill}>
+              <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
+              <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
+            </View>
+          </View>
           <View style={{ flexDirection: 'row', marginTop: 4 }}>
             <Pressable hitSlop={8} style={styles.ico} onPress={pause}>
               <Text style={styles.icoTxt}>⏸</Text>
@@ -2634,25 +2652,6 @@ function Game() {
             </Pressable>
           </View>
         </View>
-      </View>
-
-      <View style={styles.goalRow}>
-        <View style={styles.goalTrack}>
-          <View style={[styles.goalFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]}>
-            <View style={styles.goalGloss} />
-          </View>
-        </View>
-        <Text style={[styles.goalStar, progress() >= 1 && { color: '#ffd23b' }]}>★</Text>
-      </View>
-
-      <View style={[styles.bar, { height: 4, marginTop: -2, marginBottom: 4 }]}>
-        <View
-          style={{
-            height: 4,
-            width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`,
-            backgroundColor: '#ffd23b',
-          }}
-        />
       </View>
 
       <Text style={[styles.coach, { color: '#fff', textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 }]}>
@@ -2921,7 +2920,8 @@ function Game() {
           </>)}
 
           {G.banner ? (
-            <View style={styles.bannerWrap} pointerEvents="none">
+            <View style={[styles.bannerWrap, /^x\d+ CHAIN$/.test(G.banner) && { alignItems: 'flex-end', justifyContent: 'flex-start', paddingTop: 8, paddingRight: 8 }]} pointerEvents="none">
+              {/^x\d+ CHAIN$/.test(G.banner) && <Text style={styles.comboLbl}>COMBO</Text>}
               <Animated.Text
                 style={[
                   styles.banner,
@@ -2933,7 +2933,7 @@ function Game() {
                   },
                 ]}
               >
-                {G.banner}
+                {/^x\d+ CHAIN$/.test(G.banner) ? G.banner.split(' ')[0] : G.banner}
               </Animated.Text>
             </View>
           ) : null}
@@ -3250,7 +3250,7 @@ const styles = StyleSheet.create({
     paddingTop: (StatusBar.currentHeight || 24) + 6,
   },
   hud: {
-    width: '90%',
+    width: '96%',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
@@ -3292,7 +3292,7 @@ const styles = StyleSheet.create({
   banner: {
     color: '#ffd23b',
     fontSize: 40,
-    fontWeight: '900',
+    fontFamily: FONT,
     textShadowColor: '#ff3b6b',
     textShadowRadius: 14,
   },
@@ -3308,6 +3308,17 @@ const styles = StyleSheet.create({
   coach: { fontSize: 13, fontFamily: FONT, letterSpacing: 0.5, height: 18, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: 'rgba(0,0,0,0.30)', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
+  badge: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(20,10,60,0.6)', borderWidth: 3, borderColor: '#ffd23b', alignItems: 'center', justifyContent: 'center' },
+  badgeLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 10, lineHeight: 11 },
+  badgeNum: { color: '#fff', fontFamily: FONT, fontSize: 22, lineHeight: 24, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
+  stat: { height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden', justifyContent: 'center' },
+  statFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
+  statTxt: { color: '#fff', fontFamily: FONT, fontSize: 11, textAlign: 'center', paddingHorizontal: 4, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
+  pill: { flexDirection: 'row', alignItems: 'center', height: 28, paddingHorizontal: 8, borderRadius: 14, backgroundColor: 'rgba(20,10,60,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
+  pillLbl: { color: 'rgba(255,255,255,0.75)', fontFamily: FONT, fontSize: 10, marginRight: 5 },
+  pillIco: { fontSize: 14, marginRight: 4 },
+  pillNum: { color: '#fff', fontFamily: FONT, fontSize: 15, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
+  comboLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 14, letterSpacing: 2, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
   nextBox: { flexDirection: 'row', alignItems: 'flex-start', padding: 6, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)' },
   goalRow: { width: '90%', flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   goalTrack: { flex: 1, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.42)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden' },
@@ -3338,7 +3349,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   btnDown: { backgroundColor: 'rgba(255,255,255,0.38)', borderBottomWidth: 2, transform: [{ translateY: 3 }] },
-  btnDim: { opacity: 0.32 },
+  btnDim: { opacity: 0.45 },
   btnTxt: { color: '#fff', fontSize: 24, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
   dropBtn: { backgroundColor: 'rgba(255,59,107,0.20)', borderColor: '#ff3b6b', borderTopColor: '#ff7a9a' },
   dropTxt: { fontSize: 17, fontFamily: FONT, letterSpacing: 1 },
@@ -3348,7 +3359,7 @@ const styles = StyleSheet.create({
   gripTxt: { color: 'rgba(255,255,255,0.85)', fontSize: 12, letterSpacing: 2, fontWeight: '900' },
   ico: { width: 38, height: 38, marginLeft: 6, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.38)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)', borderBottomWidth: 4, borderBottomColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   icoTxt: { color: '#fff', fontSize: 17 },
-  fbtn: { flex: 0, width: 48, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.28)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.6)' },
+  fbtn: { flex: 0, width: 48, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: 'rgba(25,12,70,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.7)' },
   fdrop: { flex: 0, width: 66, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: '#ff3b6b', borderWidth: 2, borderColor: '#ffd0dc', borderBottomColor: '#a3123a' },
 });
 
