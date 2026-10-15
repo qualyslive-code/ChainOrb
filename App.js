@@ -1312,8 +1312,9 @@ function CountUp({ to, style }) {
 const MAP_W = 300, NODE = 58, NODE_H = 78, HEAD_H = 40;
 const nodeX = (L) => MAP_W / 2 + Math.sin((L - 1) * 0.95) * 86;
 const nodeY = (L) => 46 + (L - 1) * NODE_H + realmOf(L) * HEAD_H;
-function WorldMap({ unlocked, stars, float, onPlay }) {
+function WorldMap({ unlocked, stars, float, onPlay, onReady }) {
   const H = nodeY(MAX_LEVEL) + NODE_H;
+  const done = useRef(false); // fresh per mount, so it scrolls once each time the menu opens
   const items = [];
   for (let L = 1; L <= MAX_LEVEL; L++) {
     const x = nodeX(L), y = nodeY(L);
@@ -1351,7 +1352,18 @@ function WorldMap({ unlocked, stars, float, onPlay }) {
       );
     }
   }
-  return <View style={{ width: MAP_W, height: H, marginTop: 6 }}>{items}</View>;
+  return (
+    <View
+      style={{ width: MAP_W, height: H, marginTop: 6 }}
+      onLayout={(e) => {
+        if (done.current) return;
+        done.current = true;
+        if (onReady) onReady(e.nativeEvent.layout.y);
+      }}
+    >
+      {items}
+    </View>
+  );
 }
 
 function StarReveal({ filled, delay, size }) {
@@ -1599,6 +1611,8 @@ function Game() {
   const svFlash = useSharedValue(0);
   const svFallY = useSharedValue(0);
   const svFall = useSharedValue(1e6);
+  const menuScroll = useRef(null);
+  const menuViewH = useRef(0);
   // engine-side hooks go through G.fx so the extracted engine code (Harness.mjs) never sees Skia
   G.fx = {
     burst() { svBurst.value = 0; svBurst.value = withTiming(1, { duration: 280 }); },
@@ -2937,7 +2951,7 @@ function Game() {
                   </Pressable>
                 </>
               ) : G.status === 'menu' ? (
-                <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
+                <ScrollView ref={menuScroll} onLayout={(e) => { menuViewH.current = e.nativeEvent.layout.height; }} style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
                   {[1, 2, 3, 4, 5].map((k) => (
                     <Animated.View
                       key={k}
@@ -2976,7 +2990,17 @@ function Game() {
                     </Text>
                   </Animated.View>
                   <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}{G.streak.n ? `  •  🔥${G.streak.n}` : ''}</Text>
-                  <WorldMap unlocked={G.unlocked} stars={G.stars} float={float} onPlay={start} />
+                  <WorldMap
+                    unlocked={G.unlocked}
+                    stars={G.stars}
+                    float={float}
+                    onPlay={start}
+                    onReady={(mapTop) => {
+                      // centre the current level node in the viewport (positions are exact: nodeY is fixed-pixel)
+                      const y = mapTop + nodeY(Math.min(G.unlocked, MAX_LEVEL)) + NODE / 2 - (menuViewH.current || height * 0.6) / 2;
+                      if (menuScroll.current) menuScroll.current.scrollTo({ y: Math.max(0, y), animated: false });
+                    }}
+                  />
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
                     <Pressable
                       onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
