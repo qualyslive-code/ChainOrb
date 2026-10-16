@@ -1441,7 +1441,8 @@ try {
 } catch (e) {}
 const BOTTOM_PAD = SAFE_BOTTOM != null ? SAFE_BOTTOM + 14 : Platform.OS === 'android' ? 52 : 24;
 const BOARD_BOTTOM = Math.max(4, BOTTOM_PAD - 10); // keeps the last row clear of the system nav bar
-const CONTROLS_H = 86; // strip under the board that holds the buttons (grip + one row)
+const CONTROLS_H = 86;
+const HUD_H = 62; // compact HUD band at the top of the one window
 const STATUS_H = (StatusBar.currentHeight || 24) + 6; // same as styles.root paddingTop
 const RAIL_W = 46; // left rail: NEXT + orblings
 const DIM = 'rgba(14,9,42,0.22)'; // light tint over the scene art
@@ -1612,7 +1613,15 @@ function Game() {
   }).current;
 
   const [, setT] = useState(0);
-  const render = useCallback(() => setT((t) => t + 1), []);
+  const renderPending = useRef(false);
+  const render = useCallback(() => {
+    if (renderPending.current) return;
+    renderPending.current = true;
+    requestAnimationFrame(() => {
+      renderPending.current = false;
+      if (alive.current) setT((t) => t + 1);
+    });
+  }, []);
   const alive = useRef(true);
   const shake = useRef(new Animated.Value(0)).current;
   const burst = useRef(new Animated.Value(0)).current;
@@ -2516,7 +2525,7 @@ function Game() {
   /* ---------- draw ---------- */
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - BOARD_BOTTOM - 12) / ROWS))
+    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - HUD_H - BOARD_BOTTOM - 8) / ROWS))
   );
 
   G.cell = cell;
@@ -2548,6 +2557,7 @@ function Game() {
     }, 550);
   }, [G.startedAt, G.status]);
   const paused = G.status === 'paused';
+  const showCtl = G.status === 'playing' || G.status === 'resolving';
   useEffect(() => {
     musHold = paused;
     applyMusic();
@@ -2605,58 +2615,7 @@ function Game() {
       </View>
 
       <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: DIM }]} />
-
-      <View style={[styles.hudL, { top: STATUS_H - 2 }]}>
-        <View style={styles.badge}>
-          <Text style={styles.badgeLbl}>LV</Text>
-          <Text style={styles.badgeNum}>{G.level}</Text>
-        </View>
-        <View style={{ width: 78, marginLeft: 5 }}>
-          <View style={styles.stat}>
-            <View style={[styles.statFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
-            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>{goalText()}</Text>
-          </View>
-          <View style={[styles.stat, { marginTop: 4 }]}>
-            <View style={[styles.statFill, { width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`, backgroundColor: '#ffb020' }]} />
-            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>
-              {G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER'}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={[styles.hudR, { top: STATUS_H - 2 }]}>
-        <View style={styles.pill}>
-          <Text style={styles.pillLbl}>SCORE</Text>
-          <Text style={styles.pillNum}>{G.score}</Text>
-        </View>
-        <View style={{ flexDirection: 'row', marginTop: 4 }}>
-          <View style={[styles.pill, { marginRight: 4 }]}>
-            <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
-            <Text style={styles.pillNum}>{G.shards}</Text>
-          </View>
-          <View style={styles.pill}>
-            <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
-            <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
-          </View>
-        </View>
-        <View style={{ flexDirection: 'row', marginTop: 6 }}>
-          <Pressable hitSlop={8} style={styles.ico} onPress={pause}>
-            <Text style={styles.icoTxt}>⏸</Text>
-          </Pressable>
-          <Pressable
-            hitSlop={8}
-            style={styles.ico}
-            onPress={() => {
-              MUTED = !MUTED;
-              AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
-              render();
-            }}
-          >
-            <Text style={styles.icoTxt}>{MUTED ? '🔇' : '🔊'}</Text>
-          </Pressable>
-        </View>
-      </View>
+      <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: BOARD_BACK }]} />
 
       {G.status !== 'menu' && !!G.coach && (
         <Text pointerEvents="none" style={[styles.coachFloat, { top: STATUS_H + 120 + cell * 2 }]}>
@@ -2707,7 +2666,7 @@ function Game() {
           })}
         </View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
-        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: BOARD_BACK, borderColor: G.feverPcs > 0 ? '#ffd23b' : 'transparent' }]}>
+        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: 'transparent', borderColor: G.feverPcs > 0 ? '#ffd23b' : 'transparent' }]}>
           {USE_SKIA && (
             <BoardCanvas
               board={display} cell={cell} skin={SKIN} popping={G.popping} fall={G.fall} fallId={G.fallId || 0}
@@ -2954,284 +2913,341 @@ function Game() {
             </View>
           ) : null}
 
-          {G.status !== 'playing' && G.status !== 'resolving' && (
-            <View style={styles.overlay}>
-              {G.status === 'paused' ? (
-                <>
-                  <Text style={styles.title}>PAUSED</Text>
-                  <Pressable style={styles.play} onPress={resume}>
-                    <Text style={styles.playTxt}>RESUME</Text>
-                  </Pressable>
-                  <Pressable
-                    style={{ marginTop: 18 }}
-                    onPress={() => {
-                      logEvent('quit');
-                      start(G.level);
-                    }}
-                  >
-                    <Text style={styles.hint}>RESTART LEVEL</Text>
-                  </Pressable>
-                  <Pressable
-                    style={{ marginTop: 18 }}
-                    onPress={() => {
-                      logEvent('quit');
-                      G.status = 'menu';
-                      render();
-                    }}
-                  >
-                    <Text style={styles.hint}>QUIT TO LEVELS</Text>
-                  </Pressable>
-                </>
-              ) : G.status === 'menu' ? (
-                <ScrollView ref={menuScroll} onLayout={(e) => { menuViewH.current = e.nativeEvent.layout.height; }} style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
-                  {[1, 2, 3, 4, 5].map((k) => (
-                    <Animated.View
-                      key={k}
-                      pointerEvents="none"
-                      style={{
-                        position: 'absolute',
-                        left: `${k * 16 - 8}%`,
-                        top: k % 2 ? '8%' : '78%',
-                        opacity: 0.35,
-                        transform: [
-                          {
-                            translateY: float.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [0, k % 2 ? 26 : -26],
-                            }),
-                          },
-                        ],
-                      }}
-                    >
-                      <Orb color={k} size={34} />
-                    </Animated.View>
-                  ))}
-                  <Animated.View style={{ transform: [{ scale: float.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] }) }, { rotate: float.interpolate({ inputRange: [0, 1], outputRange: ['-1.5deg', '1.5deg'] }) }] }}>
-                    <Text style={[styles.title, { fontSize: 40, textShadowColor: T.accent }]}>CHAINORB</Text>
-                  </Animated.View>
-                  <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
-                  <Animated.View
-                    style={{
-                      transform: [
-                        { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) },
-                      ],
-                    }}
-                  >
-                    <Text style={{ fontSize: 28, letterSpacing: 6, textAlign: 'center' }}>
-                      {ORBLINGS.map((o) => (totalStars(G.stars) >= o.need ? o.icon : '🥚')).join(' ')}
-                    </Text>
-                  </Animated.View>
-                  <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}{G.streak.n ? `  •  🔥${G.streak.n}` : ''}</Text>
-                  <WorldMap
-                    unlocked={G.unlocked}
-                    stars={G.stars}
-                    float={float}
-                    onPlay={start}
-                    onReady={(mapTop) => {
-                      // centre the current level node in the viewport (positions are exact: nodeY is fixed-pixel)
-                      const y = mapTop + nodeY(Math.min(G.unlocked, MAX_LEVEL)) + NODE / 2 - (menuViewH.current || height * 0.6) / 2;
-                      if (menuScroll.current) menuScroll.current.scrollTo({ y: Math.max(0, y), animated: false });
-                    }}
-                  />
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
-                    <Pressable
-                      onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
-                      style={[styles.modeBtn, { borderColor: '#ffd23b' }]}
-                    >
-                      <Text style={styles.modeTxt}>
-                        {G.daily && G.daily.d === dateKey() ? 'DAILY ✓ SHARE' : '🔥 DAILY'}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        if (G.chestDay === dateKey()) return;
-                        G.chestDay = dateKey();
-                        G.shards += CHEST_SHARDS;
-                        G.chestFlash = Date.now();
-                        setTimeout(() => render(), 1700);
-                        saveMeta();
-                        AsyncStorage.setItem('chestDay', G.chestDay).catch(() => {});
-                        jingle([4, 6, 9], 70);
-                        render();
-                      }}
-                      style={[styles.modeBtn, { borderColor: '#ff8a3b', opacity: G.chestDay === dateKey() ? 0.5 : 1 }]}
-                    >
-                      <Text style={styles.modeTxt}>{Date.now() - (G.chestFlash || 0) < 1600 ? `🎁 +${CHEST_SHARDS} ◆` : G.chestDay === dateKey() ? '🎁 OPENED ✓' : '🎁 DAILY CHEST'}</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        touchStreak();
-                        G.status = 'shop';
-                        render();
-                      }}
-                      style={[styles.modeBtn, { borderColor: '#ff3bd4' }]}
-                    >
-                      <Text style={styles.modeTxt}>🎯 MISSIONS</Text>
-                    </Pressable>
-                    {G.stars[20] ? (
-                      <Pressable onPress={() => start(21)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
-                        <Text style={styles.modeTxt}>∞ ENDLESS</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                  {G.lastErr ? (
-                    <Pressable
-                      onPress={() => {
-                        G.lastErr = '';
-                        AsyncStorage.removeItem('lastError').catch(() => {});
-                        render();
-                      }}
-                    >
-                      <Text numberOfLines={5} style={{ color: '#ff3b6b', fontSize: 9, width: 280, marginTop: 6 }}>
-                        LAST ERROR (tap to clear): {G.lastErr}
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </ScrollView>
-              ) : G.status === 'shop' ? (
-                <>
-                  <Text style={styles.title}>MISSIONS</Text>
-                  <Text style={styles.hint}>
-                    🔥 {G.streak.n} day streak  •  ◆ {G.shards} shards
-                  </Text>
-                  {(G.missions ? G.missions.items : []).map((it) => (
-                    <Text
-                      key={it.k}
-                      style={[styles.hint, { color: it.done ? '#2bff88' : '#ddd', fontSize: 14, marginTop: 6 }]}
-                    >
-                      {it.done ? '✓ ' : '○ '}
-                      {it.text}  ({Math.min(it.have, it.need)}/{it.need})
-                    </Text>
-                  ))}
-                  <Text style={[styles.hint, { marginTop: 14 }]}>ORB SKINS (earned with shards)</Text>
-                  <View style={{ flexDirection: 'row', marginTop: 6 }}>
-                    {SKINS.map((sk) => (
-                      <Pressable
-                        key={sk.id}
-                        onPress={() => pickSkin(sk.id)}
-                        style={[
-                          styles.modeBtn,
-                          { marginHorizontal: 3, paddingHorizontal: 8, borderColor: G.skin === sk.id ? '#2bff88' : '#2a2a4a' },
-                        ]}
-                      >
-                        <Text style={styles.modeTxt}>{sk.name}</Text>
-                        <Text style={{ color: '#aaa', fontSize: 10, textAlign: 'center' }}>
-                          {G.owned.includes(sk.id) ? (G.skin === sk.id ? 'USING' : 'OWNED') : `◆ ${sk.cost}`}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                  <Pressable
-                    style={{ marginTop: 18 }}
-                    onPress={() => {
-                      G.status = 'menu';
-                      render();
-                    }}
-                  >
-                    <Text style={styles.hint}>BACK</Text>
-                  </Pressable>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.title}>
-                    {G.status === 'won'
-                      ? `LEVEL ${G.level} CLEAR`
-                      : G.moves && G.placed >= G.moves
-                      ? 'OUT OF MOVES'
-                      : G.t === 'daily'
-                      ? 'DAILY CHAIN'
-                      : 'GAME OVER'}
-                  </Text>
-                  {G.status === 'won' && <Confetti w={width} h={height} />}
-                  {G.status === 'won' && (
-                    <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                      {[1, 2, 3].map((i) => (
-                        <StarReveal key={i} filled={i <= G.earned} delay={i * 240} size={38} />
-                      ))}
-                    </View>
-                  )}
-                  {G.status === 'over' && soClose() && (
-                    <Text style={[styles.hatch, { color: T.accent }]}>
-                      {soClose().head}{'\n'}{soClose().left}
-                    </Text>
-                  )}
-                  {G.status === 'won' && G.boss && (
-                    <Text style={[styles.hatch, { color: '#ffd23b' }]}>BOSS DEFEATED!</Text>
-                  )}
-                  {G.status === 'won' && G.hatched && (
-                    <Text style={styles.hatch}>
-                      {G.hatched.icon} NEW ORBLING{'\n'}
-                      {G.hatched.name}{'\n'}
-                      {G.hatched.power}
-                    </Text>
-                  )}
-                  <Text style={styles.overScore}>
-                    {G.status === 'won' && <CountUp to={G.score} style={styles.overScore} />}
-                    {G.status === 'won' || G.t === 'endless' || G.t === 'daily'
-                      ? `${G.status === 'won' ? '' : G.score} pts${G.status === 'won' && G.t !== 'daily' ? (G.newBest ? ' • NEW BEST!' : ` • best ${G.lvlBest[G.level] || 0}`) : ''}`
-                      : `${Math.min(99, Math.round(progress() * 100))}% there`}
-                    {'  •  '}best chain x{G.maxChain}
-                  </Text>
-                  <Pressable
-                    style={styles.play}
-                    onPress={nextAction}
-                  >
-                    <Text style={styles.playTxt}>
-                      {G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
-                    </Text>
-                  </Pressable>
-                  {G.t === 'daily' && ONLINE && (
-                    <View style={{ marginTop: 6, alignItems: 'center' }}>
-                      <Text style={styles.small}>TODAY'S TOP</Text>
-                      {G.lb === null ? (
-                        <Text style={styles.hint}>loading…</Text>
-                      ) : G.lb.length === 0 ? (
-                        <Text style={styles.hint}>no scores yet (or offline)</Text>
-                      ) : (
-                        G.lb.slice(0, 5).map((r, i) => (
-                          <Text key={r.pos} style={[styles.small, r.is_me && { color: T.accent }]}>
-                            {r.pos}. {r.name} {r.country}  {r.score}  x{r.chain}
-                          </Text>
-                        ))
-                      )}
-                    </View>
-                  )}
-                  {G.t === 'daily' && ONLINE && G.lb && G.lb.length > 0 && (
-                    <Pressable style={styles.adBtn} onPress={watchTop}>
-                      <Text style={styles.adBtnTxt}>▶ WATCH THE #1 RUN</Text>
-                    </Pressable>
-                  )}
-                  {G.card && G.card.chain >= 4 && (
-                    <Pressable style={styles.adBtn} onPress={shareChain}>
-                      <Text style={styles.adBtnTxt}>📤 SHARE YOUR x{G.card.chain} CHAIN</Text>
-                    </Pressable>
-                  )}
-                  {G.status === 'over' && !G.continued && G.t !== 'daily' && (
-                    <Pressable style={styles.adBtn} onPress={continueAfterAd}>
-                      <Text style={styles.adBtnTxt}>▶ WATCH AD: KEEP GOING</Text>
-                    </Pressable>
-                  )}
-                  {G.status === 'over' && (G.fails[G.level] || 0) >= 3 && G.t !== 'daily' && G.level < MAX_LEVEL && (
-                    <Pressable style={styles.adBtn} onPress={skipLevel}>
-                      <Text style={styles.adBtnTxt}>▶ WATCH AD: SKIP THIS LEVEL</Text>
-                    </Pressable>
-                  )}
-                  {G.status === 'won' && G.earned < 3 && !G.starAd && (
-                    <Pressable style={styles.adBtn} onPress={adStar}>
-                      <Text style={styles.adBtnTxt}>▶ WATCH AD: +1 ★</Text>
-                    </Pressable>
-                  )}
-                  <Pressable onPress={() => { G.status = 'menu'; render(); }}>
-                    <Text style={styles.hint}>LEVELS</Text>
-                  </Pressable>
-                </>
-              )}
-            </View>
-          )}
         </View>
       </Animated.View>
       </View>
 
+      {/* ONE WINDOW: overlay fills it, HUD and controls are drawn on top */}
+      {G.status !== 'playing' && G.status !== 'resolving' && (
+        <View style={styles.overlay}>
+          {G.status === 'paused' ? (
+            <>
+              <Text style={styles.title}>PAUSED</Text>
+              <Pressable style={styles.play} onPress={resume}>
+                <Text style={styles.playTxt}>RESUME</Text>
+              </Pressable>
+              <Pressable
+                style={{ marginTop: 18 }}
+                onPress={() => {
+                  logEvent('quit');
+                  start(G.level);
+                }}
+              >
+                <Text style={styles.hint}>RESTART LEVEL</Text>
+              </Pressable>
+              <Pressable
+                style={{ marginTop: 18 }}
+                onPress={() => {
+                  logEvent('quit');
+                  G.status = 'menu';
+                  render();
+                }}
+              >
+                <Text style={styles.hint}>QUIT TO LEVELS</Text>
+              </Pressable>
+            </>
+          ) : G.status === 'menu' ? (
+            <ScrollView ref={menuScroll} onLayout={(e) => { menuViewH.current = e.nativeEvent.layout.height; }} style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
+              {[1, 2, 3, 4, 5].map((k) => (
+                <Animated.View
+                  key={k}
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: `${k * 16 - 8}%`,
+                    top: k % 2 ? '8%' : '78%',
+                    opacity: 0.35,
+                    transform: [
+                      {
+                        translateY: float.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, k % 2 ? 26 : -26],
+                        }),
+                      },
+                    ],
+                  }}
+                >
+                  <Orb color={k} size={34} />
+                </Animated.View>
+              ))}
+              <Animated.View style={{ transform: [{ scale: float.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] }) }, { rotate: float.interpolate({ inputRange: [0, 1], outputRange: ['-1.5deg', '1.5deg'] }) }] }}>
+                <Text style={[styles.title, { fontSize: 40, textShadowColor: T.accent }]}>CHAINORB</Text>
+              </Animated.View>
+              <Text style={styles.hint}>Hit the goal to unlock the next level</Text>
+              <Animated.View
+                style={{
+                  transform: [
+                    { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) },
+                  ],
+                }}
+              >
+                <Text style={{ fontSize: 28, letterSpacing: 6, textAlign: 'center' }}>
+                  {ORBLINGS.map((o) => (totalStars(G.stars) >= o.need ? o.icon : '🥚')).join(' ')}
+                </Text>
+              </Animated.View>
+              <Text style={styles.hint}>{orblingLine(G.stars)}  •  {VERSION}{G.streak.n ? `  •  🔥${G.streak.n}` : ''}</Text>
+              <WorldMap
+                unlocked={G.unlocked}
+                stars={G.stars}
+                float={float}
+                onPlay={start}
+                onReady={(mapTop) => {
+                  // centre the current level node in the viewport (positions are exact: nodeY is fixed-pixel)
+                  const y = mapTop + nodeY(Math.min(G.unlocked, MAX_LEVEL)) + NODE / 2 - (menuViewH.current || height * 0.6) / 2;
+                  if (menuScroll.current) menuScroll.current.scrollTo({ y: Math.max(0, y), animated: false });
+                }}
+              />
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
+                <Pressable
+                  onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
+                  style={[styles.modeBtn, { borderColor: '#ffd23b' }]}
+                >
+                  <Text style={styles.modeTxt}>
+                    {G.daily && G.daily.d === dateKey() ? 'DAILY ✓ SHARE' : '🔥 DAILY'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    if (G.chestDay === dateKey()) return;
+                    G.chestDay = dateKey();
+                    G.shards += CHEST_SHARDS;
+                    G.chestFlash = Date.now();
+                    setTimeout(() => render(), 1700);
+                    saveMeta();
+                    AsyncStorage.setItem('chestDay', G.chestDay).catch(() => {});
+                    jingle([4, 6, 9], 70);
+                    render();
+                  }}
+                  style={[styles.modeBtn, { borderColor: '#ff8a3b', opacity: G.chestDay === dateKey() ? 0.5 : 1 }]}
+                >
+                  <Text style={styles.modeTxt}>{Date.now() - (G.chestFlash || 0) < 1600 ? `🎁 +${CHEST_SHARDS} ◆` : G.chestDay === dateKey() ? '🎁 OPENED ✓' : '🎁 DAILY CHEST'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    touchStreak();
+                    G.status = 'shop';
+                    render();
+                  }}
+                  style={[styles.modeBtn, { borderColor: '#ff3bd4' }]}
+                >
+                  <Text style={styles.modeTxt}>🎯 MISSIONS</Text>
+                </Pressable>
+                {G.stars[20] ? (
+                  <Pressable onPress={() => start(21)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
+                    <Text style={styles.modeTxt}>∞ ENDLESS</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              {G.lastErr ? (
+                <Pressable
+                  onPress={() => {
+                    G.lastErr = '';
+                    AsyncStorage.removeItem('lastError').catch(() => {});
+                    render();
+                  }}
+                >
+                  <Text numberOfLines={5} style={{ color: '#ff3b6b', fontSize: 9, width: 280, marginTop: 6 }}>
+                    LAST ERROR (tap to clear): {G.lastErr}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </ScrollView>
+          ) : G.status === 'shop' ? (
+            <>
+              <Text style={styles.title}>MISSIONS</Text>
+              <Text style={styles.hint}>
+                🔥 {G.streak.n} day streak  •  ◆ {G.shards} shards
+              </Text>
+              {(G.missions ? G.missions.items : []).map((it) => (
+                <Text
+                  key={it.k}
+                  style={[styles.hint, { color: it.done ? '#2bff88' : '#ddd', fontSize: 14, marginTop: 6 }]}
+                >
+                  {it.done ? '✓ ' : '○ '}
+                  {it.text}  ({Math.min(it.have, it.need)}/{it.need})
+                </Text>
+              ))}
+              <Text style={[styles.hint, { marginTop: 14 }]}>ORB SKINS (earned with shards)</Text>
+              <View style={{ flexDirection: 'row', marginTop: 6 }}>
+                {SKINS.map((sk) => (
+                  <Pressable
+                    key={sk.id}
+                    onPress={() => pickSkin(sk.id)}
+                    style={[
+                      styles.modeBtn,
+                      { marginHorizontal: 3, paddingHorizontal: 8, borderColor: G.skin === sk.id ? '#2bff88' : '#2a2a4a' },
+                    ]}
+                  >
+                    <Text style={styles.modeTxt}>{sk.name}</Text>
+                    <Text style={{ color: '#aaa', fontSize: 10, textAlign: 'center' }}>
+                      {G.owned.includes(sk.id) ? (G.skin === sk.id ? 'USING' : 'OWNED') : `◆ ${sk.cost}`}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                style={{ marginTop: 18 }}
+                onPress={() => {
+                  G.status = 'menu';
+                  render();
+                }}
+              >
+                <Text style={styles.hint}>BACK</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.title}>
+                {G.status === 'won'
+                  ? `LEVEL ${G.level} CLEAR`
+                  : G.moves && G.placed >= G.moves
+                  ? 'OUT OF MOVES'
+                  : G.t === 'daily'
+                  ? 'DAILY CHAIN'
+                  : 'GAME OVER'}
+              </Text>
+              {G.status === 'won' && <Confetti w={width} h={height} />}
+              {G.status === 'won' && (
+                <View style={{ flexDirection: 'row', marginTop: 8 }}>
+                  {[1, 2, 3].map((i) => (
+                    <StarReveal key={i} filled={i <= G.earned} delay={i * 240} size={38} />
+                  ))}
+                </View>
+              )}
+              {G.status === 'over' && soClose() && (
+                <Text style={[styles.hatch, { color: T.accent }]}>
+                  {soClose().head}{'\n'}{soClose().left}
+                </Text>
+              )}
+              {G.status === 'won' && G.boss && (
+                <Text style={[styles.hatch, { color: '#ffd23b' }]}>BOSS DEFEATED!</Text>
+              )}
+              {G.status === 'won' && G.hatched && (
+                <Text style={styles.hatch}>
+                  {G.hatched.icon} NEW ORBLING{'\n'}
+                  {G.hatched.name}{'\n'}
+                  {G.hatched.power}
+                </Text>
+              )}
+              <Text style={styles.overScore}>
+                {G.status === 'won' && <CountUp to={G.score} style={styles.overScore} />}
+                {G.status === 'won' || G.t === 'endless' || G.t === 'daily'
+                  ? `${G.status === 'won' ? '' : G.score} pts${G.status === 'won' && G.t !== 'daily' ? (G.newBest ? ' • NEW BEST!' : ` • best ${G.lvlBest[G.level] || 0}`) : ''}`
+                  : `${Math.min(99, Math.round(progress() * 100))}% there`}
+                {'  •  '}best chain x{G.maxChain}
+              </Text>
+              <Pressable
+                style={styles.play}
+                onPress={nextAction}
+              >
+                <Text style={styles.playTxt}>
+                  {G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
+                </Text>
+              </Pressable>
+              {G.t === 'daily' && ONLINE && (
+                <View style={{ marginTop: 6, alignItems: 'center' }}>
+                  <Text style={styles.small}>TODAY'S TOP</Text>
+                  {G.lb === null ? (
+                    <Text style={styles.hint}>loading…</Text>
+                  ) : G.lb.length === 0 ? (
+                    <Text style={styles.hint}>no scores yet (or offline)</Text>
+                  ) : (
+                    G.lb.slice(0, 5).map((r, i) => (
+                      <Text key={r.pos} style={[styles.small, r.is_me && { color: T.accent }]}>
+                        {r.pos}. {r.name} {r.country}  {r.score}  x{r.chain}
+                      </Text>
+                    ))
+                  )}
+                </View>
+              )}
+              {G.t === 'daily' && ONLINE && G.lb && G.lb.length > 0 && (
+                <Pressable style={styles.adBtn} onPress={watchTop}>
+                  <Text style={styles.adBtnTxt}>▶ WATCH THE #1 RUN</Text>
+                </Pressable>
+              )}
+              {G.card && G.card.chain >= 4 && (
+                <Pressable style={styles.adBtn} onPress={shareChain}>
+                  <Text style={styles.adBtnTxt}>📤 SHARE YOUR x{G.card.chain} CHAIN</Text>
+                </Pressable>
+              )}
+              {G.status === 'over' && !G.continued && G.t !== 'daily' && (
+                <Pressable style={styles.adBtn} onPress={continueAfterAd}>
+                  <Text style={styles.adBtnTxt}>▶ WATCH AD: KEEP GOING</Text>
+                </Pressable>
+              )}
+              {G.status === 'over' && (G.fails[G.level] || 0) >= 3 && G.t !== 'daily' && G.level < MAX_LEVEL && (
+                <Pressable style={styles.adBtn} onPress={skipLevel}>
+                  <Text style={styles.adBtnTxt}>▶ WATCH AD: SKIP THIS LEVEL</Text>
+                </Pressable>
+              )}
+              {G.status === 'won' && G.earned < 3 && !G.starAd && (
+                <Pressable style={styles.adBtn} onPress={adStar}>
+                  <Text style={styles.adBtnTxt}>▶ WATCH AD: +1 ★</Text>
+                </Pressable>
+              )}
+              <Pressable onPress={() => { G.status = 'menu'; render(); }}>
+                <Text style={styles.hint}>LEVELS</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      )}
+
+      {G.status !== 'menu' && G.status !== 'shop' && (
+        <View style={[styles.hudBar, { top: STATUS_H - 2 }]}>
+          <View style={styles.hudL}>
+            <View style={styles.badge}>
+              <Text style={styles.badgeLbl}>LV</Text>
+              <Text style={styles.badgeNum}>{G.level}</Text>
+            </View>
+            <View style={{ width: 84, marginLeft: 6 }}>
+              <View style={styles.stat}>
+                <View style={[styles.statFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>{goalText()}</Text>
+              </View>
+              <View style={[styles.stat, { marginTop: 4 }]}>
+                <View style={[styles.statFill, { width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`, backgroundColor: '#ffb020' }]} />
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>
+                  {G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER'}
+                </Text>
+              </View>
+            </View>
+          </View>
+          <View style={styles.hudR}>
+            <View style={styles.pill}>
+              <Text style={styles.pillLbl}>SCORE</Text>
+              <Text style={styles.pillNum}>{G.score}</Text>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+              <View style={[styles.pill, { marginRight: 4, paddingHorizontal: 6 }]}>
+                <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
+                <Text style={styles.pillNum}>{G.shards}</Text>
+              </View>
+              <View style={[styles.pill, { paddingHorizontal: 6 }]}>
+                <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
+                <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
+              </View>
+              <Pressable hitSlop={8} style={[styles.ico, { width: 30, height: 30, borderRadius: 15 }]} onPress={pause}>
+                <Text style={styles.icoTxt}>⏸</Text>
+              </Pressable>
+              <Pressable
+                hitSlop={8}
+                style={[styles.ico, { width: 30, height: 30, borderRadius: 15 }]}
+                onPress={() => {
+                  MUTED = !MUTED;
+                  AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
+                  render();
+                }}
+              >
+                <Text style={styles.icoTxt}>{MUTED ? '🔇' : '🔊'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {showCtl && (
+      <>
       <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - 150, minY: -(height - 230), maxY: 0 }}>
         <View style={styles.dpad}>
           <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={[styles.dArm, { left: 6, top: 43 }]} />
@@ -3246,6 +3262,8 @@ function Game() {
           <HoldButton dim={G.status !== 'playing'} label={'▼\nDROP'} onPress={hardDrop} style={[styles.act, styles.actDrop, { right: 0, bottom: 0, width: 76, height: 76, borderRadius: 38 }]} textStyle={styles.actTxt} />
         </View>
       </FloatPad>
+      </>
+      )}
       {G.ad && (
         <View style={styles.adCover}>
           <Text style={styles.adTxt}>AD (placeholder)</Text>
@@ -3286,10 +3304,11 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...ABS_FILL,
+    paddingTop: (StatusBar.currentHeight || 24) + 6,
+    paddingBottom: BOARD_BOTTOM,
     backgroundColor: 'rgba(30,15,80,0.84)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 14,
   },
   title: { color: '#fff', textShadowColor: '#2bff88', textShadowRadius: 16, fontSize: 30, fontFamily: FONT, letterSpacing: 3 },
   overScore: { color: '#aaa', marginTop: 8, fontSize: 15, fontFamily: FONT },
@@ -3337,8 +3356,9 @@ const styles = StyleSheet.create({
   pillIco: { fontSize: 14, marginRight: 4 },
   pillNum: { color: '#fff', fontFamily: FONT, fontSize: 15, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
   comboLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 14, letterSpacing: 2, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
-  hudL: { position: 'absolute', left: 8, flexDirection: 'row', alignItems: 'center' },
-  hudR: { position: 'absolute', right: 8, alignItems: 'flex-end' },
+  hudBar: { position: 'absolute', left: 0, right: 0, height: HUD_H, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, zIndex: 20 },
+  hudL: { flexDirection: 'row', alignItems: 'center' },
+  hudR: { alignItems: 'flex-end' },
   dpad: { width: 128, height: 128, borderRadius: 64, backgroundColor: 'rgba(255,255,255,0.10)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.38)' },
   dArm: { position: 'absolute', flex: 0, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)', borderBottomWidth: 2, borderBottomColor: 'rgba(255,255,255,0.55)' },
   acts: { width: 156, height: 130 },
