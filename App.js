@@ -9,8 +9,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { File, Paths } from 'expo-file-system';
 import { useFonts, Fredoka_700Bold } from '@expo-google-fonts/fredoka';
-import { Canvas, Group, Path, Circle, Rect, RoundedRect, Points, Shadow, Skia } from '@shopify/react-native-skia';
-import { useSharedValue, useDerivedValue, withTiming, withRepeat, interpolate, Easing as REasing } from 'react-native-reanimated';
+import { Canvas, Group, Path, Circle, Rect, RoundedRect, Oval, Line, Points, Shadow, Skia, LinearGradient, RadialGradient, DashPathEffect, vec } from '@shopify/react-native-skia';
+import { useSharedValue, useDerivedValue, withTiming, withRepeat, withSpring, interpolate, Easing as REasing } from 'react-native-reanimated';
 
 const FONT = 'Fredoka_700Bold';
 
@@ -177,7 +177,7 @@ const LEVELS = [
 ];
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v18';
+const VERSION = 'v19';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -946,11 +946,21 @@ const STAR_D = (() => {
 })();
 const GLYPH_D = [null, null, 'M0 -0.5L0.5 0.42L-0.5 0.42Z', 'M-0.42 -0.42H0.42V0.42H-0.42Z', 'M0 -0.55L0.5 0L0 0.55L-0.5 0Z', STAR_D];
 
-// one orb, drawn in its own 0..size box at (x, y). same look as the old Orb view.
+/* ---- v19 colour helpers (render-only) ---- */
+const _rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const _mix = (h, t, to) => `rgb(${_rgb(h).map((v) => Math.round(v + (to - v) * t)).join(',')})`;
+const lighten = (h, t) => _mix(h, t, 255);
+const darken = (h, t) => _mix(h, t, 0);
+const rgba = (h, a) => `rgba(${_rgb(h).join(',')},${a})`;
+const GOLD = ['#fff3bf', '#f6cf74', '#d9a13f', '#8f5a16'];
+
+// one orb, drawn in its own 0..size box at (x, y). v19: gradient body, rim light, aura, sparkle eyes.
 const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, active, sk }) {
   const s = size;
   const shape = sk === 'gel' && color >= 1 && color <= 5 ? color : 0;
   const gemLike = sk === 'gem' || shape === 4;
+  const nice = color >= 1 && color <= 5;
+  const base = COLORS[color] || '#ffffff';
   const pad = s * 0.06;
   const bw = color === BOMB || color === PRISM ? 3 : color === CRACK ? 2 : sk === 'ring' ? s * 0.14 : sk === 'candy' ? 3 : s * 0.06;
   const w = s - pad * 2;
@@ -960,56 +970,73 @@ const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, act
     : shape === 3 ? [s * 0.5, s * 0.12, s * 0.5, s * 0.12]
     : shape === 5 ? [s * 0.5, s * 0.5, s * 0.2, s * 0.2]
     : [s, s, s, s];
-  const fill = popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : COLORS[color];
+  const useGrad = !popping && sk !== 'ring' && color !== BOMB;
+  const fill = popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : base;
   const edge =
-    color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? COLORS[color]
-    : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : 'rgba(0,0,0,0.5)';
+    color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? base
+    : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : nice ? darken(base, 0.55) : 'rgba(0,0,0,0.5)';
   const body = rrPath(pad, pad, w, w, rad);
   const ring = rrPath(pad + bw / 2, pad + bw / 2, w - bw, w - bw, rad.map((r) => Math.max(0, r - bw / 2)));
   const ox = pad + bw;
   const iw = s - 2 * pad - 2 * bw;
-  const face = color >= 1 && color <= 5 && !gemLike;
-  const ew = s * (worry ? 0.2 : 0.13);
-  const eh = s * (popping ? 0.04 : worry ? 0.2 : 0.13);
+  const face = nice && !gemLike;
+  const ew = s * (worry ? 0.2 : 0.14);
+  const eh = s * (popping ? 0.04 : worry ? 0.22 : 0.18);
   const rowW = 2 * (ew + s * 0.12);
   const ex = ox + (iw - rowW) / 2 + s * 0.06;
-  const ey = ox + s * 0.4;
+  const ey = ox + s * 0.36;
   const mw = s * 0.3;
   const mh = s * 0.16;
   const mx = ox + (iw - mw) / 2;
-  const my = ox + s * 0.5;
+  const my = ox + s * 0.52;
   const gy = ox + (gemLike ? s * 0.3 : s * 0.62) + s * 0.13;
   const gs = s * 0.26;
-  const gcol = sk === 'ring' ? COLORS[color] : 'rgba(20,20,42,0.78)';
+  const gcol = sk === 'ring' ? base : 'rgba(20,20,42,0.78)';
   const tf = [{ scale: popping ? 1.2 : 1 }, ...(gemLike ? [{ rotate: Math.PI / 4 }, { scale: 0.78 }] : [])];
+  const showGlyph = nice && sk !== 'gel'; // gel skin already differs by shape
   return (
     <Group transform={[{ translateX: x }, { translateY: y }]}>
+      {active && nice && !popping && (
+        <Circle cx={s / 2} cy={s / 2} r={s * 0.82}>
+          <RadialGradient c={vec(s / 2, s / 2)} r={s * 0.82} colors={[rgba(base, 0.62), rgba(base, 0)]} positions={[0.4, 1]} />
+        </Circle>
+      )}
       <Group transform={tf} origin={{ x: s / 2, y: s / 2 }}>
-        <Path path={body} color={fill}>
-          <Shadow dx={0} dy={2} blur={active ? 7 : 2} color={active ? COLORS[color] : 'rgba(0,0,0,0.5)'} />
+        <Path path={body} color={useGrad ? undefined : fill}>
+          {useGrad && (
+            <RadialGradient c={vec(s * 0.38, s * 0.3)} r={s * 0.82} colors={[lighten(base, 0.52), base, darken(base, 0.4)]} positions={[0, 0.5, 1]} />
+          )}
+          <Shadow dx={0} dy={2} blur={active ? 5 : 2} color={active ? rgba(base, 0.9) : 'rgba(0,0,0,0.5)'} />
         </Path>
         <Path path={ring} style="stroke" strokeWidth={bw} color={edge} />
-        <RoundedRect x={ox + s * 0.12} y={ox + iw - s * 0.07 - s * 0.3} width={iw - s * 0.24} height={s * 0.3} r={s * 0.15} color="rgba(0,0,0,0.14)" />
+        {nice && !popping && (
+          <Path path={rrPath(ox + s * 0.02, ox + s * 0.02, iw - s * 0.04, iw - s * 0.04, rad.map((r) => Math.max(0, r - ox * 0.5)))} style="stroke" strokeWidth={s * 0.03} color="rgba(255,255,255,0.34)" />
+        )}
+        <RoundedRect x={ox + s * 0.12} y={ox + iw - s * 0.07 - s * 0.3} width={iw - s * 0.24} height={s * 0.3} r={s * 0.15} color="rgba(0,0,0,0.12)" />
         <Group transform={[{ rotate: -Math.PI / 9 }]} origin={{ x: ox + s * 0.16 + s * 0.19, y: ox + s * 0.08 + s * 0.09 }}>
-          <RoundedRect x={ox + s * 0.16} y={ox + s * 0.08} width={s * 0.38} height={s * 0.18} r={s * 0.09} color="rgba(255,255,255,0.85)" />
+          <RoundedRect x={ox + s * 0.16} y={ox + s * 0.08} width={s * 0.38} height={s * 0.18} r={s * 0.09} color="rgba(255,255,255,0.88)" />
         </Group>
         <Group transform={[{ rotate: -Math.PI / 9 }]} origin={{ x: ox + iw - s * 0.16 - s * 0.07, y: ox + iw - s * 0.14 - s * 0.04 }}>
           <RoundedRect x={ox + iw - s * 0.16 - s * 0.14} y={ox + iw - s * 0.14 - s * 0.08} width={s * 0.14} height={s * 0.08} r={s * 0.04} color="rgba(255,255,255,0.28)" />
         </Group>
-        <Path path={rrPath(ox + s * 0.065, ox + s * 0.065, iw - s * 0.13, iw - s * 0.13, [s, s, s, s])} style="stroke" strokeWidth={s * 0.07} color="rgba(0,0,0,0.12)" />
+        {shape === 3 && !popping && (
+          <Path path={svgPath(`M${ox + iw * 0.3} ${ox + iw * 0.7}Q${ox + iw * 0.5} ${ox + iw * 0.4} ${ox + iw * 0.76} ${ox + iw * 0.2}`)} style="stroke" strokeWidth={s * 0.03} strokeCap="round" color="rgba(255,255,255,0.5)" />
+        )}
         {face && (
           <>
-            <RoundedRect x={ex} y={ey} width={ew} height={eh} r={Math.min(ew, eh) / 2} color="#14142a" />
-            <RoundedRect x={ex + ew + s * 0.12} y={ey} width={ew} height={eh} r={Math.min(ew, eh) / 2} color="#14142a" />
+            <Oval x={ex} y={ey} width={ew} height={eh} color="#1a1030" />
+            <Oval x={ex + ew + s * 0.12} y={ey} width={ew} height={eh} color="#1a1030" />
           </>
         )}
         {face && !popping && (
           <>
-            <Circle cx={ex + ew * 0.7} cy={ey + eh * 0.3} r={s * 0.02} color="rgba(255,255,255,0.95)" />
-            <Circle cx={ex + ew + s * 0.12 + ew * 0.7} cy={ey + eh * 0.3} r={s * 0.02} color="rgba(255,255,255,0.95)" />
-            <Circle cx={ex - s * 0.03} cy={ey + eh + s * 0.05} r={s * 0.055} color="rgba(255,110,170,0.42)" />
-            <Circle cx={ex + 2 * ew + s * 0.12 + s * 0.03} cy={ey + eh + s * 0.05} r={s * 0.055} color="rgba(255,110,170,0.42)" />
-            {!worry && <Path path={svgPath(`M${ox + iw / 2 - s * 0.09} ${ey + eh + s * 0.07}Q${ox + iw / 2} ${ey + eh + s * 0.17} ${ox + iw / 2 + s * 0.09} ${ey + eh + s * 0.07}`)} style="stroke" strokeWidth={s * 0.035} color="#14142a" />}
+            <Circle cx={ex + ew * 0.68} cy={ey + eh * 0.3} r={s * 0.034} color="rgba(255,255,255,0.98)" />
+            <Circle cx={ex + ew * 0.3} cy={ey + eh * 0.72} r={s * 0.016} color="rgba(255,255,255,0.85)" />
+            <Circle cx={ex + ew + s * 0.12 + ew * 0.68} cy={ey + eh * 0.3} r={s * 0.034} color="rgba(255,255,255,0.98)" />
+            <Circle cx={ex + ew + s * 0.12 + ew * 0.3} cy={ey + eh * 0.72} r={s * 0.016} color="rgba(255,255,255,0.85)" />
+            <Circle cx={ex - s * 0.04} cy={ey + eh + s * 0.05} r={s * 0.06} color="rgba(255,110,170,0.5)" />
+            <Circle cx={ex + 2 * ew + s * 0.12 + s * 0.04} cy={ey + eh + s * 0.05} r={s * 0.06} color="rgba(255,110,170,0.5)" />
+            {!worry && <Path path={svgPath(`M${ox + iw / 2 - s * 0.09} ${ey + eh + s * 0.06}Q${ox + iw / 2} ${ey + eh + s * 0.17} ${ox + iw / 2 + s * 0.09} ${ey + eh + s * 0.06}`)} style="stroke" strokeWidth={s * 0.035} strokeCap="round" color="#1a1030" />}
           </>
         )}
         {face && popping && (
@@ -1018,7 +1045,7 @@ const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, act
             <Path path={svgPath(`M${mx} ${my}A${mw / 2} ${mh} 0 0 0 ${mx + mw} ${my}`)} style="stroke" strokeWidth={s * 0.04} color="#14142a" />
           </>
         )}
-        {color >= 1 && color <= 5 && (
+        {showGlyph && (
           <Group transform={[{ translateX: ox + iw / 2 }, { translateY: gy }, ...(gemLike ? [{ rotate: -Math.PI / 4 }] : []), { scale: gs }]}>
             {color === 1 ? <Circle cx={0} cy={0} r={0.45} color={gcol} /> : <Path path={svgPath(GLYPH_D[color])} color={gcol} />}
           </Group>
@@ -1062,10 +1089,10 @@ function ParticleLayer({ items, burst, cell }) {
   return <Points points={pts} mode="points" style="stroke" strokeWidth={sw} strokeCap="round" color={items[0].color} />;
 }
 
-function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, glow, piece, danger, playing, accent, sv }) {
+function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, glow, danger, playing, accent, sv, hide, landKeys, landId }) {
   const W = cell * COLS + 2;
   const H = cell * ROWS + 2;
-  const { float, burst, flash, fallY, fall: fallClock } = sv;
+  const { float, burst, flash, fall: fallClock, land: landClock } = sv;
   const wob = useDerivedValue(() => {
     'worklet';
     return [{ translateY: cell * 0.02 * float.value }, { scaleY: 1 - 0.03 * float.value }];
@@ -1077,10 +1104,6 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
   const dangerOp = useDerivedValue(() => {
     'worklet';
     return 0.15 + 0.65 * float.value;
-  });
-  const pieceT = useDerivedValue(() => {
-    'worklet';
-    return [{ translateY: fallY.value }];
   });
   const partOp = useDerivedValue(() => {
     'worklet';
@@ -1138,6 +1161,7 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
           row.map((col, c) => {
             if (!col) return null;
             const k = r * COLS + c;
+            if (hide && hide.has(k)) return null;
             const x = c * cell;
             const y = r * cell;
             const pop = popping.has(k);
@@ -1151,6 +1175,13 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
               );
             }
             if (pop) return <Group key={k}>{orb}</Group>;
+            if (landKeys && landKeys.has(k)) {
+              return (
+                <LandCell key={`l${k}-${landId}`} cell={cell} x={x} y={y} clock={landClock}>
+                  {orb}
+                </LandCell>
+              );
+            }
             return (
               <Group key={k} transform={wob} origin={{ x: x + cell / 2, y: y + cell / 2 }}>
                 {orb}
@@ -1161,14 +1192,14 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
       </Group>
 
       {Array.from({ length: ROWS - 1 }, (_, i) => (
-        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,150,230,0.20)" />
+        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,150,230,0.26)" />
       ))}
       {Array.from({ length: COLS - 1 }, (_, i) => (
-        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,150,230,0.20)" />
+        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,150,230,0.26)" />
       ))}
-      <Rect x={1.5} y={2} width={1.5} height={H - 4} color="rgba(255,170,235,0.42)" />
-      <Rect x={W - 3} y={2} width={1.5} height={H - 4} color="rgba(255,170,235,0.42)" />
-      <Rect x={2} y={H - 3} width={W - 4} height={1.5} color="rgba(255,170,235,0.42)" />
+      <Rect x={1.5} y={2} width={1.5} height={H - 4} color="rgba(255,170,235,0.5)" />
+      <Rect x={W - 3} y={2} width={1.5} height={H - 4} color="rgba(255,170,235,0.5)" />
+      <Rect x={2} y={H - 3} width={W - 4} height={1.5} color="rgba(255,170,235,0.5)" />
 
       <Group opacity={glowOp}>
         {[...glow].map((k) => {
@@ -1179,25 +1210,7 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
         })}
       </Group>
 
-      {ghost.map(([r, c, col]) => (
-        <Group key={`g${r}-${c}`}>
-          <Circle cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.38 - 1} style="stroke" strokeWidth={2.5} color={COLORS[col]} opacity={0.8} />
-          <Circle cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.46} style="stroke" strokeWidth={1} color={COLORS[col]} opacity={0.45} />
-          <Circle cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.29} style="stroke" strokeWidth={1} color={COLORS[col]} opacity={0.4} />
-        </Group>
-      ))}
-
       <RoundedRect x={0} y={0} width={W} height={H} r={10} color={accent} opacity={flash} />
-
-      {piece && (
-        <Group transform={pieceT}>
-          {cellsOf(piece).map(([r, c, col], i) =>
-            r >= 0 && r < ROWS && c >= 0 && c < COLS ? (
-              <OrbSk key={i} color={col} size={cell} x={2 + c * cell} y={2 + r * cell} worry={danger} active sk={col >= 1 && col <= 5 ? skin : 'gel'} />
-            ) : null
-          )}
-        </Group>
-      )}
 
       {danger && playing && (
         <RoundedRect x={1.5} y={1.5} width={W - 3} height={H - 3} r={10} style="stroke" strokeWidth={3} color="#ff3b6b" opacity={dangerOp} />
@@ -1230,6 +1243,682 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
     </Canvas>
   );
 }
+
+/* ============================== V19 ART (Skia, render-only) ============================== */
+// Everything below is drawn in "mockup units" (the 768-wide concept art) and scaled by s = width / 768.
+
+function Gem({ cx, cy, r, c }) {
+  const d = `M${cx} ${cy - r}L${cx + r * 0.85} ${cy}L${cx} ${cy + r}L${cx - r * 0.85} ${cy}Z`;
+  return (
+    <Group>
+      <Path path={svgPath(d)}>
+        <LinearGradient start={vec(cx - r, cy - r)} end={vec(cx + r, cy + r)} colors={[lighten(c, 0.7), c, darken(c, 0.45)]} />
+      </Path>
+      <Path path={svgPath(d)} style="stroke" strokeWidth={r * 0.14} color="rgba(255,255,255,0.55)" />
+      <Path path={svgPath(`M${cx - r * 0.1} ${cy - r * 0.8}L${cx + r * 0.45} ${cy - r * 0.1}L${cx} ${cy - r * 0.1}Z`)} color="rgba(255,255,255,0.7)" />
+    </Group>
+  );
+}
+
+// gold-framed plate (pill by default). fill = 3 gradient colours, top to bottom
+function Plate({ x, y, w, h, fill, bw = 5, r }) {
+  const rr = r == null ? h / 2 : r;
+  const ir = Math.max(2, rr - bw);
+  return (
+    <>
+      <RoundedRect x={x} y={y + 3} width={w} height={h} r={rr} color="rgba(0,0,0,0.38)" />
+      <RoundedRect x={x} y={y} width={w} height={h} r={rr}>
+        <LinearGradient start={vec(x, y)} end={vec(x, y + h)} colors={GOLD} />
+      </RoundedRect>
+      <RoundedRect x={x + bw} y={y + bw} width={w - bw * 2} height={h - bw * 2} r={ir}>
+        <LinearGradient start={vec(x, y + bw)} end={vec(x, y + h - bw)} colors={fill} />
+      </RoundedRect>
+      <RoundedRect x={x + bw + 5} y={y + bw + 3} width={w - bw * 2 - 10} height={(h - bw * 2) * 0.36} r={ir * 0.6} color="rgba(255,255,255,0.20)" />
+    </>
+  );
+}
+
+// round gold-ringed sphere: ring radius R, body gradient colours (light to dark)
+function Sphere({ cx, cy, R, body, ring = GOLD, ringW = 0.13 }) {
+  const rb = R * (1 - ringW);
+  return (
+    <>
+      <Circle cx={cx} cy={cy + R * 0.06} r={R} color="rgba(0,0,0,0.4)" />
+      <Circle cx={cx} cy={cy} r={R}>
+        <LinearGradient start={vec(cx - R, cy - R)} end={vec(cx + R, cy + R)} colors={ring} />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={rb}>
+        <RadialGradient c={vec(cx - rb * 0.3, cy - rb * 0.38)} r={rb * 1.35} colors={body} />
+      </Circle>
+      <Oval x={cx - rb * 0.62} y={cy - rb * 0.9} width={rb * 1.24} height={rb * 0.7} color="rgba(255,255,255,0.28)" />
+      <Circle cx={cx - rb * 0.42} cy={cy - rb * 0.58} r={rb * 0.09} color="rgba(255,255,255,0.85)" />
+    </>
+  );
+}
+
+const SPARK_D = 'M0 -1Q0.14 -0.14 1 0Q0.14 0.14 0 1Q-0.14 0.14 -1 0Q-0.14 -0.14 0 -1Z';
+const gearD = (R1, R2, n) => {
+  const pts = [];
+  for (let i = 0; i < n * 4; i++) {
+    const a = (i / (n * 4)) * Math.PI * 2 - Math.PI / (n * 4);
+    const k = i % 4 === 0 || i % 4 === 1 ? R2 : R1;
+    pts.push(`${(Math.cos(a) * k).toFixed(2)} ${(Math.sin(a) * k).toFixed(2)}`);
+  }
+  return 'M' + pts.join('L') + 'Z';
+};
+const GEAR_D = gearD(11, 15, 8);
+// circular arrow: arc + arrowhead, radius r, clockwise
+function rotArrow(r) {
+  const a0 = (-125 * Math.PI) / 180;
+  const a1 = (140 * Math.PI) / 180;
+  const sx = r * Math.cos(a0), sy = r * Math.sin(a0);
+  const ex = r * Math.cos(a1), ey = r * Math.sin(a1);
+  const tx = -Math.sin(a1), ty = Math.cos(a1); // clockwise tangent
+  const nx = Math.cos(a1), ny = Math.sin(a1);
+  const hx = ex + tx * r * 0.5, hy = ey + ty * r * 0.5;
+  return {
+    arc: `M${sx.toFixed(2)} ${sy.toFixed(2)}A${r} ${r} 0 1 1 ${ex.toFixed(2)} ${ey.toFixed(2)}`,
+    head: `M${hx.toFixed(2)} ${hy.toFixed(2)}L${(ex + nx * r * 0.42 - tx * r * 0.1).toFixed(2)} ${(ey + ny * r * 0.42 - ty * r * 0.1).toFixed(2)}L${(ex - nx * r * 0.42 - tx * r * 0.1).toFixed(2)} ${(ey - ny * r * 0.42 - ty * r * 0.1).toFixed(2)}Z`,
+  };
+}
+const ROT_ARROW = rotArrow(16);
+
+/* ---------- HUD ---------- */
+const HudArt = React.memo(function HudArt({ w, h, goal, fever, feverOn, muted }) {
+  const s = w / 768;
+  const g = Math.max(0, Math.min(1, goal));
+  const f = feverOn ? 1 : Math.max(0, Math.min(1, fever));
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: w, height: h }}>
+      <Group transform={[{ scale: s }]}>
+        {/* level medallion */}
+        <Circle cx={70} cy={87} r={78}>
+          <RadialGradient c={vec(70, 87)} r={78} colors={['rgba(255,200,90,0.35)', 'rgba(255,200,90,0)']} positions={[0.6, 1]} />
+        </Circle>
+        <Circle cx={70} cy={90} r={62} color="rgba(0,0,0,0.4)" />
+        <Circle cx={70} cy={87} r={62}>
+          <LinearGradient start={vec(20, 30)} end={vec(120, 145)} colors={GOLD} />
+        </Circle>
+        <Circle cx={70} cy={87} r={50} color="#5b3510" />
+        <Circle cx={70} cy={87} r={47}>
+          <RadialGradient c={vec(60, 72)} r={62} colors={['#7a4aa8', '#3a1d62', '#22103f']} positions={[0, 0.6, 1]} />
+        </Circle>
+        <Circle cx={70} cy={87} r={47} style="stroke" strokeWidth={2} color="rgba(255,230,160,0.55)" />
+        <Gem cx={70} cy={26} r={13} c="#4fe3ff" />
+        <Gem cx={9} cy={87} r={11} c="#ff5cc8" />
+        <Gem cx={131} cy={87} r={11} c="#ff5cc8" />
+        <Gem cx={70} cy={148} r={11} c="#ff5cc8" />
+        {/* goal bar */}
+        <Plate x={132} y={44} w={198} h={48} fill={['#27408f', '#16286a', '#0e1a4c']} />
+        <Group clip={rrPath(137, 49, 188, 38, [19, 19, 19, 19])}>
+          {g > 0 && (
+            <Rect x={137} y={49} width={188 * g} height={38}>
+              <LinearGradient start={vec(0, 49)} end={vec(0, 87)} colors={['#9ff3ff', '#35b6ff', '#1f7ae0']} />
+            </Rect>
+          )}
+        </Group>
+        <RoundedRect x={142} y={52} width={178} height={11} r={5.5} color="rgba(255,255,255,0.16)" />
+        <Gem cx={141} cy={68} r={11} c="#ff5cc8" />
+        <Gem cx={321} cy={68} r={11} c="#ff5cc8" />
+        {/* fever bar */}
+        <Plate x={132} y={104} w={198} h={48} fill={['#e0932f', '#b8651b', '#7d3f0e']} />
+        <Group clip={rrPath(137, 109, 188, 38, [19, 19, 19, 19])}>
+          {f > 0 && (
+            <Rect x={137} y={109} width={188 * f} height={38}>
+              <LinearGradient start={vec(0, 109)} end={vec(0, 147)} colors={['#fff4a8', '#ffc23a', '#ff8a1f']} />
+            </Rect>
+          )}
+        </Group>
+        <RoundedRect x={142} y={112} width={178} height={11} r={5.5} color="rgba(255,255,255,0.2)" />
+        {feverOn && <RoundedRect x={130} y={102} width={202} height={52} r={26} style="stroke" strokeWidth={3} color="rgba(255,236,120,0.95)" />}
+        <Gem cx={141} cy={128} r={11} c="#ff9a3b" />
+        <Gem cx={321} cy={128} r={11} c="#ff9a3b" />
+        {/* score */}
+        <Plate x={606} y={40} w={156} h={52} fill={['#7a4228', '#4c2515', '#331509']} />
+        {/* gems + stars */}
+        <Plate x={428} y={104} w={90} h={50} fill={['#d443b5', '#9b2a9e', '#5e1a78']} bw={4} />
+        <Gem cx={457} cy={129} r={15} c="#3fd8ff" />
+        <Plate x={526} y={104} w={90} h={50} fill={['#8a5fe0', '#5f3cb8', '#3a2290']} bw={4} />
+        <Group transform={[{ translateX: 556 }, { translateY: 130 }, { scale: 34 }]}>
+          <Path path={svgPath(STAR_D)} color="#ffd23b" />
+          <Path path={svgPath(STAR_D)} style="stroke" strokeWidth={0.05} color="#fff3bf" />
+        </Group>
+        {/* gear + sound */}
+        <Sphere cx={651} cy={129} R={30} body={['#d9a05a', '#a8672a', '#5e3412']} />
+        <Group transform={[{ translateX: 651 }, { translateY: 129 }]}>
+          <Path path={svgPath(GEAR_D)} color="#fff1cf" />
+          <Circle cx={0} cy={0} r={6.5} color="#7a4a1c" />
+        </Group>
+        <Sphere cx={722} cy={129} R={30} body={['#c99a58', '#8f5f28', '#4e2c10']} />
+        <Group transform={[{ translateX: 722 }, { translateY: 129 }]}>
+          <Path path={svgPath('M-14 -6H-6L4 -14V14L-6 6H-14Z')} color="#fff1cf" />
+          {muted ? (
+            <Path path={svgPath('M10 -8L22 8M22 -8L10 8')} style="stroke" strokeWidth={3.5} strokeCap="round" color="#ff8a8a" />
+          ) : (
+            <>
+              <Path path={svgPath('M9 -7A10 10 0 0 1 9 7')} style="stroke" strokeWidth={3} strokeCap="round" color="#fff1cf" />
+              <Path path={svgPath('M14 -13A18 18 0 0 1 14 13')} style="stroke" strokeWidth={3} strokeCap="round" color="rgba(255,241,207,0.75)" />
+            </>
+          )}
+        </Group>
+      </Group>
+    </Canvas>
+  );
+});
+
+/* ---------- NEXT capsule (frosted ice, icicles) ---------- */
+const NEXT_ICICLES = [[22, 32], [38, 22], [53, 40], [68, 25], [82, 30]];
+const NextArt = React.memo(function NextArt({ s, orbs, skin }) {
+  const cw = Math.round(100 * s);
+  const ch = Math.round(312 * s);
+  const slots = [[50, 100, 56], [50, 160, 56], [50, 218, 46]];
+  return (
+    <Canvas pointerEvents="none" style={{ width: cw, height: ch }}>
+      <Group transform={[{ scale: s }]}>
+        <RoundedRect x={0} y={0} width={100} height={284} r={48} style="stroke" strokeWidth={10} color="rgba(150,225,255,0.22)" />
+        <RoundedRect x={5} y={4} width={90} height={276} r={44}>
+          <LinearGradient start={vec(5, 4)} end={vec(95, 280)} colors={['rgba(210,243,255,0.85)', 'rgba(130,195,255,0.6)', 'rgba(80,140,235,0.55)']} />
+        </RoundedRect>
+        <RoundedRect x={12} y={44} width={76} height={228} r={36}>
+          <LinearGradient start={vec(0, 44)} end={vec(0, 272)} colors={['rgba(26,60,140,0.55)', 'rgba(18,36,106,0.45)']} />
+        </RoundedRect>
+        <RoundedRect x={5} y={4} width={90} height={276} r={44} style="stroke" strokeWidth={3.5}>
+          <LinearGradient start={vec(5, 4)} end={vec(95, 280)} colors={['#ffffff', '#8fd6ff', '#e6f7ff']} />
+        </RoundedRect>
+        <RoundedRect x={14} y={10} width={26} height={120} r={13} color="rgba(255,255,255,0.14)" />
+        {NEXT_ICICLES.map(([cx, len], i) => (
+          <Path key={i} path={svgPath(`M${cx - 8} 270L${cx} ${272 + len}L${cx + 8} 270Z`)}>
+            <LinearGradient start={vec(cx, 270)} end={vec(cx, 272 + len)} colors={['rgba(190,235,255,0.9)', 'rgba(255,255,255,0.55)']} />
+          </Path>
+        ))}
+      </Group>
+      {slots.map(([cx, cy, sz], i) =>
+        orbs[i] ? <OrbSk key={i} color={orbs[i]} size={sz * s} x={(cx - sz / 2) * s} y={(cy - sz / 2) * s} sk={orbs[i] >= 1 && orbs[i] <= 5 ? skin : 'gel'} /> : null
+      )}
+    </Canvas>
+  );
+});
+
+/* ---------- controls ---------- */
+// press: shared value 0..1. returns a derived squish transform about (cx, cy)
+function usePressT(press, cx, cy) {
+  return useDerivedValue(() => {
+    'worklet';
+    const k = 1 - 0.07 * press.value;
+    return [{ translateX: cx * (1 - k) }, { translateY: cy * (1 - k) + 2 * press.value }, { scale: k }];
+  });
+}
+function usePressOp(press, max) {
+  return useDerivedValue(() => {
+    'worklet';
+    return max * press.value;
+  });
+}
+
+const PAD_BTNS = [
+  { k: 'u', dx: 0, dy: -65, rot: 0 },
+  { k: 'l', dx: -64, dy: 0, rot: -Math.PI / 2 },
+  { k: 'r', dx: 64, dy: 0, rot: Math.PI / 2 },
+  { k: 'd', dx: 0, dy: 65, rot: Math.PI },
+];
+function PadBtn({ cx, cy, rot, press }) {
+  const t = usePressT(press, cx, cy);
+  const glow = usePressOp(press, 0.45);
+  return (
+    <Group transform={t}>
+      <Circle cx={cx} cy={cy + 3} r={42} color="rgba(0,0,0,0.4)" />
+      <Circle cx={cx} cy={cy} r={42}>
+        <LinearGradient start={vec(cx - 40, cy - 40)} end={vec(cx + 40, cy + 40)} colors={['#f6cf74', '#c98a22', '#7a4a10']} />
+      </Circle>
+      <Circle cx={cx} cy={cy} r={37}>
+        <RadialGradient c={vec(cx - 12, cy - 15)} r={56} colors={['#e0c6ff', '#9a68e6', '#5a30b0', '#38207a']} positions={[0, 0.35, 0.75, 1]} />
+      </Circle>
+      <Oval x={cx - 24} y={cy - 33} width={48} height={24} color="rgba(255,255,255,0.3)" />
+      <Group transform={[{ translateX: cx }, { translateY: cy }, { rotate: rot }]}>
+        <Path path={svgPath('M0 -16L16 11L-16 11Z')} color="#f6ecff" />
+        <Path path={svgPath('M0 -16L16 11L-16 11Z')} style="stroke" strokeWidth={4} strokeJoin="round" color="#f6ecff" />
+      </Group>
+      <Circle cx={cx} cy={cy} r={37} color="#ffffff" opacity={glow} />
+    </Group>
+  );
+}
+// d-pad, 320x320 mockup units
+const PadArt = React.memo(function PadArt({ size, pu, pl, pr, pd }) {
+  const k = size / 320;
+  const P = { u: pu, l: pl, r: pr, d: pd };
+  return (
+    <Canvas pointerEvents="none" style={{ width: size, height: size }}>
+      <Group transform={[{ scale: k }]}>
+        <Circle cx={160} cy={165} r={152} color="rgba(0,0,0,0.38)" />
+        <Circle cx={160} cy={160} r={152}>
+          <LinearGradient start={vec(20, 10)} end={vec(300, 310)} colors={GOLD} />
+        </Circle>
+        <Circle cx={160} cy={160} r={138} color="#4a2c0e" />
+        <Circle cx={160} cy={160} r={134}>
+          <RadialGradient c={vec(130, 120)} r={200} colors={['#8a5ad0', '#5a339c', '#2e1a62', '#1f1048']} positions={[0, 0.4, 0.8, 1]} />
+        </Circle>
+        <Circle cx={160} cy={160} r={104} style="stroke" strokeWidth={2.5} color="rgba(246,207,116,0.55)" />
+        <Path path={svgPath('M160 40L176 144L280 160L176 176L160 280L144 176L40 160L144 144Z')} color="rgba(190,150,255,0.22)" />
+        <Path path={svgPath('M160 40L176 144L280 160L176 176L160 280L144 176L40 160L144 144Z')} style="stroke" strokeWidth={2} color="rgba(246,207,116,0.5)" />
+        <Gem cx={160} cy={17} r={12} c="#c9a0ff" />
+        <Gem cx={303} cy={160} r={12} c="#c9a0ff" />
+        <Gem cx={160} cy={303} r={12} c="#c9a0ff" />
+        <Gem cx={17} cy={160} r={12} c="#c9a0ff" />
+        {PAD_BTNS.map((b) => (
+          <PadBtn key={b.k} cx={160 + b.dx} cy={160 + b.dy} rot={b.rot} press={P[b.k]} />
+        ))}
+        <Circle cx={160} cy={160} r={24}>
+          <LinearGradient start={vec(140, 140)} end={vec(180, 180)} colors={GOLD} />
+        </Circle>
+        <Circle cx={160} cy={160} r={19}>
+          <RadialGradient c={vec(154, 153)} r={26} colors={['#c89cff', '#6a30c0', '#2a1060']} />
+        </Circle>
+        <Circle cx={154} cy={153} r={4} color="rgba(255,255,255,0.8)" />
+      </Group>
+    </Canvas>
+  );
+});
+
+// action cluster, 300x300 mockup units: UNDO (left-bottom), TURN (top-right), DROP (bottom-right)
+const ACT = { undo: [50, 214, 49], turn: [214, 80, 60], drop: [212, 222, 72] };
+const ActArt = React.memo(function ActArt({ size, pUndo, pTurn, pDrop, pulse }) {
+  const k = size / 300;
+  const [ux, uy, ur] = ACT.undo;
+  const [tx, ty, tr] = ACT.turn;
+  const [dx, dy, dr] = ACT.drop;
+  const tU = usePressT(pUndo, ux, uy);
+  const tT = usePressT(pTurn, tx, ty);
+  const tD = usePressT(pDrop, dx, dy);
+  const aura = useDerivedValue(() => {
+    'worklet';
+    return 0.55 + 0.45 * pulse.value;
+  });
+  const auraT = useDerivedValue(() => {
+    'worklet';
+    return [{ scale: 0.96 + 0.1 * pulse.value }];
+  });
+  const gU = usePressOp(pUndo, 0.4);
+  const gT = usePressOp(pTurn, 0.4);
+  const gD = usePressOp(pDrop, 0.4);
+  return (
+    <Canvas pointerEvents="none" style={{ width: size, height: size }}>
+      <Group transform={[{ scale: k }]}>
+        {/* undo */}
+        <Group transform={tU}>
+          <Sphere cx={ux} cy={uy} R={ur} body={['#cfa4ec', '#8a58b8', '#4a2a78']} />
+          <Group transform={[{ translateX: ux }, { translateY: uy + 2 }, { scaleX: -1 }]}>
+            <Path path={svgPath(ROT_ARROW.arc)} style="stroke" strokeWidth={5} strokeCap="round" color="#fff1cf" />
+            <Path path={svgPath(ROT_ARROW.head)} color="#fff1cf" />
+          </Group>
+          <Circle cx={ux} cy={uy} r={ur * 0.87} color="#ffffff" opacity={gU} />
+        </Group>
+        {/* turn */}
+        <Group transform={tT}>
+          <Sphere cx={tx} cy={ty} R={tr} body={['#a9f6f2', '#3fb5bd', '#1d6d86', '#124a63']} />
+          <Group transform={[{ translateX: tx }, { translateY: ty - 20 }]}>
+            <Path path={svgPath(ROT_ARROW.arc)} style="stroke" strokeWidth={4.2} strokeCap="round" color="#ffffff" />
+            <Path path={svgPath(ROT_ARROW.head)} color="#ffffff" />
+          </Group>
+          <Circle cx={tx} cy={ty} r={tr * 0.87} color="#ffffff" opacity={gT} />
+        </Group>
+        {/* drop */}
+        <Group transform={auraT} origin={{ x: dx, y: dy }}>
+          <Circle cx={dx} cy={dy} r={dr + 26} opacity={aura}>
+            <RadialGradient c={vec(dx, dy)} r={dr + 26} colors={['rgba(255,70,200,0.9)', 'rgba(255,60,190,0.45)', 'rgba(255,60,190,0)']} positions={[0.62, 0.8, 1]} />
+          </Circle>
+          <Circle cx={dx} cy={dy} r={dr + 9} style="stroke" strokeWidth={3.5} color="rgba(255,120,230,0.85)" opacity={aura} />
+        </Group>
+        <Group transform={tD}>
+          <Sphere cx={dx} cy={dy} R={dr} body={['#ffa89a', '#ff3b3b', '#c4121e', '#780a14']} />
+          <Path path={svgPath(`M${dx - 11} ${dy - 33}L${dx + 11} ${dy - 33}L${dx} ${dy - 17}Z`)} color="#ffffff" />
+          <Circle cx={dx} cy={dy} r={dr * 0.87} color="#ffffff" opacity={gD} />
+        </Group>
+      </Group>
+    </Canvas>
+  );
+});
+
+/* ---------- coach text sparkles ---------- */
+const SPARKS = [[0.06, 0.22, 11], [0.22, 0.02, 7], [0.93, 0.08, 12], [0.8, 0.9, 9], [0.12, 0.88, 8], [0.52, 0.0, 6], [0.98, 0.55, 7]];
+const Sparkles = React.memo(function Sparkles({ w, h, tw }) {
+  const a = useDerivedValue(() => {
+    'worklet';
+    return 0.35 + 0.65 * tw.value;
+  });
+  const b = useDerivedValue(() => {
+    'worklet';
+    return 1 - 0.65 * tw.value;
+  });
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: w, height: h }}>
+      {SPARKS.map(([fx, fy, sz], i) => (
+        <Group key={i} opacity={i % 2 ? a : b} transform={[{ translateX: fx * w }, { translateY: fy * h }, { scale: sz }]}>
+          <Path path={svgPath(SPARK_D)} color="#fff3c4" />
+        </Group>
+      ))}
+    </Canvas>
+  );
+});
+
+/* ---------- smooth piece layer: every pixel of motion runs on the UI thread ---------- */
+const PieceLayer = React.memo(function PieceLayer({ a, b, cell, W, H, danger, skin, pv }) {
+  const pad = cell;
+  const { x, y, r, gx, gy, gr } = pv;
+  const tA = useDerivedValue(() => {
+    'worklet';
+    return [{ translateX: x.value }, { translateY: y.value }];
+  });
+  const tB = useDerivedValue(() => {
+    'worklet';
+    return [{ translateX: x.value + cell * Math.sin(r.value) }, { translateY: y.value - cell * Math.cos(r.value) }];
+  });
+  const gA = useDerivedValue(() => {
+    'worklet';
+    return [{ translateX: gx.value }, { translateY: gy.value }];
+  });
+  const gB = useDerivedValue(() => {
+    'worklet';
+    return [{ translateX: gx.value + cell * Math.sin(gr.value) }, { translateY: gy.value - cell * Math.cos(gr.value) }];
+  });
+  const gOp = useDerivedValue(() => {
+    'worklet';
+    return interpolate(gy.value - y.value, [cell * 0.3, cell * 0.95], [0, 1], 'clamp');
+  });
+  const m = cell / 2;
+  const ghost = (col) => (
+    <>
+      <Circle cx={m} cy={m} r={cell * 0.38} color={rgba(COLORS[col] || '#ffffff', 0.14)} />
+      <Circle cx={m} cy={m} r={cell * 0.38} style="stroke" strokeWidth={2.5} color={COLORS[col] || '#ffffff'} opacity={0.85} />
+      <Circle cx={m} cy={m} r={cell * 0.47} style="stroke" strokeWidth={1} color={COLORS[col] || '#ffffff'} opacity={0.4} />
+    </>
+  );
+  const skA = a >= 1 && a <= 5 ? skin : 'gel';
+  const skB = b >= 1 && b <= 5 ? skin : 'gel';
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: -pad, top: -pad, width: W + pad * 2, height: H + pad * 2 }}>
+      <Group transform={[{ translateX: pad }, { translateY: pad }]}>
+        <Group opacity={gOp}>
+          <Group transform={gB}>{ghost(b)}</Group>
+          <Group transform={gA}>{ghost(a)}</Group>
+        </Group>
+        <Group transform={tB}>
+          <OrbSk color={b} size={cell} x={0} y={0} worry={danger} active sk={skB} />
+        </Group>
+        <Group transform={tA}>
+          <OrbSk color={a} size={cell} x={0} y={0} worry={danger} active sk={skA} />
+        </Group>
+      </Group>
+    </Canvas>
+  );
+});
+
+// squash on the cell where a locked orb lands. clock = ms since landing
+function LandCell({ cell, x, y, clock, children }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    const t2 = clock.value;
+    const sy = t2 < 45 ? 1 - 0.18 * (t2 / 45) : 1 - 0.18 * Math.exp(-(t2 - 45) / 70) * Math.cos((t2 - 45) / 45);
+    return [{ scaleX: 1 + (1 - sy) * 0.55 }, { scaleY: sy }];
+  });
+  return (
+    <Group transform={tf} origin={{ x: x + cell / 2, y: y + cell }}>
+      {children}
+    </Group>
+  );
+}
+
+/* ============================== V19 FOREST SCENE (realm 0, Skia) ============================== */
+const _h = (n) => {
+  const v = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return v - Math.floor(v);
+};
+
+function fernD(len) {
+  const segs = 9;
+  const pts = [];
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    pts.push([Math.sin(t * 1.4) * len * 0.22, -t * len]);
+  }
+  let d = 'M' + pts.map((p) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('L');
+  for (let i = 1; i <= segs; i++) {
+    const [x, y] = pts[i];
+    const l = len * 0.2 * (1 - i / (segs + 1)) + 3;
+    d += `M${x.toFixed(1)} ${y.toFixed(1)}L${(x - l).toFixed(1)} ${(y - l * 0.45).toFixed(1)}M${x.toFixed(1)} ${y.toFixed(1)}L${(x + l).toFixed(1)} ${(y - l * 0.45).toFixed(1)}`;
+  }
+  return d;
+}
+const FERN_D = fernD(100);
+
+function Fern({ x, y, sc, color, fan = [-0.9, -0.55, -0.2, 0.15, 0.5, 0.85] }) {
+  return (
+    <Group transform={[{ translateX: x }, { translateY: y }, { scale: sc }]}>
+      {fan.map((a, i) => (
+        <Group key={i} transform={[{ rotate: a }]}>
+          <Path path={svgPath(FERN_D)} style="stroke" strokeWidth={2.4 / Math.max(0.4, sc)} strokeCap="round" color={color} opacity={0.85 - (i % 2) * 0.2} />
+        </Group>
+      ))}
+    </Group>
+  );
+}
+
+function Mushroom({ cx, by, cw, ch, sw, sh, c1, c2, glow }) {
+  const top = by - sh;
+  const cap = `M${cx - cw / 2} ${top}C${cx - cw / 2} ${top - ch * 1.3} ${cx + cw / 2} ${top - ch * 1.3} ${cx + cw / 2} ${top}Q${cx} ${top + ch * 0.3} ${cx - cw / 2} ${top}Z`;
+  const spots = [[-0.28, -0.55, 0.075], [0.05, -0.8, 0.09], [0.3, -0.5, 0.065], [-0.05, -0.38, 0.05], [0.18, -0.95, 0.045]];
+  return (
+    <>
+      <Circle cx={cx} cy={top - ch * 0.4} r={cw * 0.85}>
+        <RadialGradient c={vec(cx, top - ch * 0.4)} r={cw * 0.85} colors={[rgba(glow, 0.38), rgba(glow, 0)]} />
+      </Circle>
+      <RoundedRect x={cx - sw / 2} y={top - 4} width={sw} height={sh + 4} r={sw * 0.4}>
+        <LinearGradient start={vec(cx - sw / 2, 0)} end={vec(cx + sw / 2, 0)} colors={['#6a74c4', '#c5d2ff', '#7480d0']} />
+      </RoundedRect>
+      <Oval x={cx - cw * 0.46} y={top - ch * 0.12} width={cw * 0.92} height={ch * 0.42} color={rgba(glow, 0.55)} />
+      <Path path={svgPath(cap)}>
+        <LinearGradient start={vec(cx, top - ch * 0.98)} end={vec(cx, top + ch * 0.2)} colors={[c1, c2, darken(c2, 0.5)]} />
+      </Path>
+      <Path path={svgPath(cap)} style="stroke" strokeWidth={Math.max(1.5, cw * 0.012)} color={rgba(glow, 0.6)} />
+      {spots.map(([fx, fy, fr], i) => (
+        <Circle key={i} cx={cx + fx * cw} cy={top + fy * ch} r={fr * cw} color="rgba(255,235,250,0.82)" />
+      ))}
+    </>
+  );
+}
+
+function Stone({ x, y, w, h, rot, clock, k }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.55 + 0.45 * Math.sin((clock.value * 6 + k * 0.37) * Math.PI * 2);
+  });
+  return (
+    <Group transform={[{ translateX: x }, { translateY: y }, { rotate: rot }]}>
+      <Path path={svgPath(`M${-w / 2} 0L${-w * 0.42} ${-h}Q0 ${-h * 1.1} ${w * 0.42} ${-h}L${w / 2} 0Z`)}>
+        <LinearGradient start={vec(-w / 2, -h)} end={vec(w / 2, 0)} colors={['#5a6aa0', '#2e3a66', '#161c3c']} />
+      </Path>
+      <Group opacity={op}>
+        <Path path={svgPath(`M${-w * 0.16} ${-h * 0.8}L${w * 0.16} ${-h * 0.8}M0 ${-h * 0.8}L0 ${-h * 0.55}M${-w * 0.16} ${-h * 0.55}L${w * 0.16} ${-h * 0.4}M${-w * 0.14} ${-h * 0.3}L${w * 0.14} ${-h * 0.3}`)} style="stroke" strokeWidth={Math.max(1.6, w * 0.045)} strokeCap="round" color="#6ff0ff" />
+      </Group>
+    </Group>
+  );
+}
+
+function ShootingStar({ x0, y0, dx, dy, K, ph, clock }) {
+  const p1 = useDerivedValue(() => {
+    'worklet';
+    const p = (clock.value * K + ph) % 1;
+    const u = Math.min(1, p / 0.16);
+    return { x: x0 + dx * u - dx * 0.3, y: y0 + dy * u - dy * 0.3 };
+  });
+  const p2 = useDerivedValue(() => {
+    'worklet';
+    const p = (clock.value * K + ph) % 1;
+    const u = Math.min(1, p / 0.16);
+    return { x: x0 + dx * u, y: y0 + dy * u };
+  });
+  const op = useDerivedValue(() => {
+    'worklet';
+    const p = (clock.value * K + ph) % 1;
+    return p < 0.16 ? Math.sin((p / 0.16) * Math.PI) : 0;
+  });
+  return (
+    <Group opacity={op}>
+      <Line p1={p1} p2={p2} strokeWidth={5} strokeCap="round" color="rgba(130,200,255,0.35)" />
+      <Line p1={p1} p2={p2} strokeWidth={2} strokeCap="round" color="#ffffff" />
+    </Group>
+  );
+}
+
+function Twinkle({ pts, k, ph, clock, sw }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.3 + 0.7 * (0.5 + 0.5 * Math.sin((clock.value * k + ph) * Math.PI * 2));
+  });
+  return (
+    <Group opacity={op}>
+      <Points points={pts} mode="points" style="stroke" strokeWidth={sw} strokeCap="round" color="#ffffff" />
+    </Group>
+  );
+}
+
+function Flies({ items, color, clock, sw }) {
+  const pts = useDerivedValue(() => {
+    'worklet';
+    const t = clock.value * Math.PI * 2;
+    return items.map((f) => ({ x: f.x + f.ax * Math.sin(t * f.kx + f.p1), y: f.y + f.ay * Math.sin(t * f.ky + f.p2) }));
+  });
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.55 + 0.45 * Math.sin(clock.value * Math.PI * 2 * 12 + items[0].p1);
+  });
+  return (
+    <Group opacity={op}>
+      <Points points={pts} mode="points" style="stroke" strokeWidth={sw * 2.6} strokeCap="round" color={rgba(color, 0.25)} />
+      <Points points={pts} mode="points" style="stroke" strokeWidth={sw} strokeCap="round" color={color} />
+    </Group>
+  );
+}
+
+function SpinRing({ cx, cy, r, color, clock, dir, dash }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    return [{ rotate: dir * clock.value * Math.PI * 2 * 2 }];
+  });
+  return (
+    <>
+      <Circle cx={cx} cy={cy} r={r + 5}>
+        <RadialGradient c={vec(cx, cy)} r={r + 5} colors={[rgba(color, 0), rgba(color, 0.35), rgba(color, 0)]} positions={[0.6, 0.9, 1]} />
+      </Circle>
+      <Group transform={tf} origin={{ x: cx, y: cy }}>
+        <Circle cx={cx} cy={cy} r={r} style="stroke" strokeWidth={2.4} color={color}>
+          <DashPathEffect intervals={dash} />
+        </Circle>
+        <Circle cx={cx} cy={cy} r={r * 0.82} style="stroke" strokeWidth={1.4} color={rgba(color, 0.7)} />
+      </Group>
+    </>
+  );
+}
+
+const ForestScene = React.memo(function ForestScene({ W, H, clock }) {
+  const S = W / 768;
+  const bokeh = useMemo(
+    () =>
+      Array.from({ length: 18 }, (_, i) => ({
+        x: _h(i + 1) * W,
+        y: (0.3 + _h(i + 40) * 0.6) * H,
+        r: (0.04 + _h(i + 80) * 0.06) * W,
+        c: ['#7ff3e0', '#ff9bec', '#ffe98a', '#8ab4ff'][i % 4],
+      })),
+    [W, H]
+  );
+  const stars = useMemo(() => {
+    const g = [[], [], []];
+    for (let i = 0; i < 84; i++) g[i % 3].push({ x: _h(i * 3 + 5) * W, y: _h(i * 3 + 9) * H * 0.5 });
+    return g;
+  }, [W, H]);
+  const flies = useMemo(() => {
+    const cols = ['#ffe98a', '#ff9a3b', '#7ff3e0', '#ff7ad9'];
+    return cols.map((c, ci) => ({
+      c,
+      items: Array.from({ length: 10 }, (_, i) => {
+        const n = ci * 10 + i;
+        return { x: _h(n + 200) * W, y: (0.26 + _h(n + 300) * 0.66) * H, ax: 6 + _h(n + 400) * 18, ay: 8 + _h(n + 500) * 22, kx: 2 + (n % 3), ky: 2 + ((n + 1) % 3), p1: _h(n + 600) * 6.28, p2: _h(n + 700) * 6.28 };
+      }),
+    }));
+  }, [W, H]);
+  const blobs = useMemo(
+    () =>
+      [0, 1, 2].map((row) =>
+        Array.from({ length: 9 }, (_, i) => ({ x: (i / 8) * W + (_h(i + row * 11) - 0.5) * 0.08 * W, y: (0.5 + row * 0.075) * H + _h(i + row * 17) * 0.03 * H, r: (0.1 + _h(i + row * 23) * 0.06) * W }))
+      ),
+    [W, H]
+  );
+  const rowCols = ['rgba(14,34,86,0.6)', 'rgba(8,52,70,0.7)', 'rgba(6,62,56,0.8)'];
+  const sparks = [[0.28, 0.2, 8], [0.7, 0.16, 6], [0.5, 0.3, 5], [0.14, 0.34, 6], [0.86, 0.36, 5]];
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}>
+      <Rect x={0} y={0} width={W} height={H}>
+        <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={['#0b0f40', '#1c1670', '#2b1b82', '#17428c', '#0f5c78', '#0a4048', '#06282c']} positions={[0, 0.14, 0.28, 0.48, 0.64, 0.82, 1]} />
+      </Rect>
+      <Circle cx={W * 0.2} cy={H * 0.07} r={W * 0.6}>
+        <RadialGradient c={vec(W * 0.2, H * 0.07)} r={W * 0.6} colors={['rgba(255,90,210,0.4)', 'rgba(170,70,255,0.2)', 'rgba(0,0,0,0)']} />
+      </Circle>
+      <Circle cx={W * 0.85} cy={H * 0.2} r={W * 0.65}>
+        <RadialGradient c={vec(W * 0.85, H * 0.2)} r={W * 0.65} colors={['rgba(90,230,255,0.3)', 'rgba(80,120,255,0.15)', 'rgba(0,0,0,0)']} />
+      </Circle>
+      <Circle cx={W * 0.5} cy={H * 0.5} r={W * 0.8}>
+        <RadialGradient c={vec(W * 0.5, H * 0.5)} r={W * 0.8} colors={['rgba(60,190,200,0.22)', 'rgba(0,0,0,0)']} />
+      </Circle>
+      {stars.map((g, i) => (
+        <Twinkle key={i} pts={g} k={[9, 14, 20][i]} ph={i * 0.31} clock={clock} sw={[2.2, 1.7, 1.3][i]} />
+      ))}
+      {sparks.map(([fx, fy, sz], i) => (
+        <Group key={i} transform={[{ translateX: fx * W }, { translateY: fy * H }, { scale: sz }]} opacity={0.9}>
+          <Path path={svgPath(SPARK_D)} color="#ffffff" />
+        </Group>
+      ))}
+      <ShootingStar x0={W * 0.26} y0={H * 0.2} dx={W * 0.22} dy={-H * 0.07} K={4} ph={0.1} clock={clock} />
+      <ShootingStar x0={W * 0.55} y0={H * 0.17} dx={W * 0.24} dy={-H * 0.06} K={5} ph={0.55} clock={clock} />
+      <ShootingStar x0={W * 0.1} y0={H * 0.1} dx={W * 0.2} dy={-H * 0.04} K={3} ph={0.8} clock={clock} />
+      {/* tree silhouettes */}
+      <RoundedRect x={-W * 0.03} y={-10} width={W * 0.085} height={H * 0.5} r={W * 0.04} color="rgba(4,8,30,0.82)" />
+      <Path path={svgPath(`M${W * 0.04} ${H * 0.1}Q${W * 0.16} ${H * 0.08} ${W * 0.26} ${H * 0.14}M${W * 0.03} ${H * 0.18}Q${W * 0.12} ${H * 0.2} ${W * 0.2} ${H * 0.27}`)} style="stroke" strokeWidth={W * 0.018} strokeCap="round" color="rgba(4,8,30,0.8)" />
+      {[[0.1, 0.1, 0.1], [0.2, 0.15, 0.08], [0.06, 0.22, 0.09], [0.16, 0.26, 0.07]].map(([fx, fy, fr], i) => (
+        <Circle key={i} cx={W * fx} cy={H * fy} r={W * fr} color="rgba(6,30,60,0.78)" />
+      ))}
+      <RoundedRect x={W * 0.9} y={H * 0.18} width={W * 0.07} height={H * 0.4} r={W * 0.03} color="rgba(4,14,36,0.7)" />
+      {blobs.map((row, ri) => row.map((b, i) => <Circle key={`${ri}-${i}`} cx={b.x} cy={b.y} r={b.r} color={rowCols[ri]} />))}
+      {bokeh.map((b, i) => (
+        <Circle key={`bk${i}`} cx={b.x} cy={b.y} r={b.r}>
+          <RadialGradient c={vec(b.x, b.y)} r={b.r} colors={[rgba(b.c, 0.22), rgba(b.c, 0)]} />
+        </Circle>
+      ))}
+      <Mushroom cx={W * 0.9} by={H * 0.66} cw={W * 0.44} ch={H * 0.12} sw={W * 0.07} sh={H * 0.22} c1="#ffb0e8" c2="#a45ad8" glow="#ff7ad9" />
+      <Mushroom cx={W * 0.9} by={H * 0.64} cw={W * 0.17} ch={H * 0.04} sw={W * 0.03} sh={H * 0.1} c1="#ffd08a" c2="#e08a3a" glow="#ffb04a" />
+      <Mushroom cx={W * 0.03} by={H * 0.76} cw={W * 0.28} ch={H * 0.075} sw={W * 0.045} sh={H * 0.11} c1="#ffc0ee" c2="#b45ce0" glow="#ff7ad9" />
+      <Fern x={W * 0.86} y={H * 0.8} sc={1.15 * S + 0.25} color="#5ef0d0" />
+      <Fern x={W * 0.95} y={H * 0.7} sc={0.9 * S + 0.2} color="#3fd8b8" fan={[-1.0, -0.6, -0.2, 0.2]} />
+      <Fern x={W * 0.08} y={H * 0.82} sc={0.95 * S + 0.2} color="#4ae0c0" />
+      <Fern x={W * 0.58} y={H * 0.98} sc={0.8 * S + 0.2} color="#3fd8b8" />
+      {/* mossy ground */}
+      <Path path={svgPath(`M0 ${H * 0.865}Q${W * 0.25} ${H * 0.82} ${W * 0.5} ${H * 0.855}T${W} ${H * 0.84}V${H}H0Z`)}>
+        <LinearGradient start={vec(0, H * 0.82)} end={vec(0, H)} colors={['#14604a', '#0b4036', '#062a2c']} />
+      </Path>
+      <Oval x={W * 0.15} y={H * 0.9} width={W * 0.6} height={H * 0.1} color="rgba(60,230,200,0.12)" />
+      {[[0.085, 0.935, 0.1, 0.1, -0.16], [0.44, 0.86, 0.075, 0.09, 0.08], [0.29, 0.93, 0.07, 0.07, -0.05], [0.64, 0.925, 0.085, 0.09, 0.14], [0.74, 0.985, 0.09, 0.08, -0.1]].map(([fx, fy, fw, fh, rot], i) => (
+        <Stone key={i} x={W * fx} y={H * fy} w={W * fw} h={H * fh} rot={rot} clock={clock} k={i} />
+      ))}
+      <SpinRing cx={W * 0.43} cy={H * 0.865} r={W * 0.065} color="#5cd8ff" clock={clock} dir={1} dash={[5, 9]} />
+      <SpinRing cx={W * 0.415} cy={H * 0.955} r={W * 0.08} color="#ff7a4a" clock={clock} dir={-1} dash={[4, 7]} />
+      {flies.map((f, i) => (
+        <Flies key={i} items={f.items} color={f.c} clock={clock} sw={3.2} />
+      ))}
+      <Rect x={0} y={0} width={W} height={H}>
+        <RadialGradient c={vec(W / 2, H * 0.48)} r={H * 0.78} colors={['rgba(2,4,24,0)', 'rgba(2,4,24,0)', 'rgba(2,4,24,0.6)']} positions={[0, 0.55, 1]} />
+      </Rect>
+    </Canvas>
+  );
+});
 
 function Scene({ realm, width, height }) {
   const W = width;
@@ -1555,7 +2244,15 @@ function FloatPad({ id, anchor, bounds, children }) {
       style={[anchor === 'left' ? styles.padL : styles.padR, { transform: pos.getTranslateTransform() }]}
     >
       <View {...pan.panHandlers} hitSlop={10} style={[styles.grip, edit && styles.gripOn]}>
-        <Text style={[styles.gripTxt, edit && { color: '#1a0f3a' }]}>{edit ? '✥ DRAG ME' : '⋮⋮⋮'}</Text>
+        {edit ? (
+          <Text style={[styles.gripTxt, { color: '#1a0f3a' }]}>✥ DRAG ME</Text>
+        ) : (
+          <View style={styles.gripDots}>
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+              <View key={n} style={styles.gripDot} />
+            ))}
+          </View>
+        )}
       </View>
       {children}
       {edit && <View {...pan.panHandlers} style={[ABS_FILL, styles.padEdit]} />}
@@ -1563,30 +2260,35 @@ function FloatPad({ id, anchor, bounds, children }) {
   );
 }
 
-// NEXTGEN_CONTROLS
-function HoldButton({ label, onPress, repeat, style, textStyle, dim }) {
+// NEXTGEN_CONTROLS (v19): transparent hit area over Skia art, press feedback on the UI thread, tight hold-repeat
+function HoldButton({ onPress, repeat, repeatMs = 62, delayMs = 150, style, dim, press, children }) {
   const t = useRef(null);
   const i = useRef(null);
-  const stop = () => {
+  const clear = () => {
     clearTimeout(t.current);
     clearInterval(i.current);
   };
-  useEffect(() => stop, []);
+  useEffect(() => clear, []);
   return (
     <Pressable
+      hitSlop={6}
       onPressIn={() => {
+        if (press) press.value = withTiming(1, { duration: 50 });
         if (!dim) Haptics.selectionAsync().catch(() => {});
         onPress();
         if (repeat) {
           t.current = setTimeout(() => {
-            i.current = setInterval(onPress, 75);
-          }, 170);
+            i.current = setInterval(onPress, repeatMs);
+          }, delayMs);
         }
       }}
-      onPressOut={stop}
-      style={({ pressed }) => [styles.btn, style, dim && styles.btnDim, pressed && !dim && styles.btnDown]}
+      onPressOut={() => {
+        clear();
+        if (press) press.value = withTiming(0, { duration: 110 });
+      }}
+      style={style}
     >
-      <Text style={[styles.btnTxt, textStyle]}>{label}</Text>
+      {children}
     </Pressable>
   );
 }
@@ -1676,15 +2378,113 @@ function Game() {
   const svFlash = useSharedValue(0);
   const svFallY = useSharedValue(0);
   const svFall = useSharedValue(1e6);
+  // v19: piece pose lives on the UI thread. x,y = pivot cell top-left (px, board canvas space), r = child angle (rad, unwrapped)
+  const svPX = useSharedValue(0);
+  const svPY = useSharedValue(0);
+  const svPR = useSharedValue(0);
+  const svGX = useSharedValue(0);
+  const svGY = useSharedValue(0);
+  const svGR = useSharedValue(0);
+  const svLand = useSharedValue(1e6);
+  const svPulse = useSharedValue(0);
+  const svClock = useSharedValue(0);
+  const pU = useSharedValue(0);
+  const pL = useSharedValue(0);
+  const pR = useSharedValue(0);
+  const pD = useSharedValue(0);
+  const pTurn = useSharedValue(0);
+  const pUndo = useSharedValue(0);
+  const pDrop = useSharedValue(0);
+  const pvObj = useMemo(() => ({ x: svPX, y: svPY, r: svPR, gx: svGX, gy: svGY, gr: svGR }), []);
   const menuScroll = useRef(null);
   const cheer = useRef(new Animated.Value(0)).current; // Orbling hop on big chains
   const menuViewH = useRef(0);
   // engine-side hooks go through G.fx so the extracted engine code (Harness.mjs) never sees Skia
+  const SPR_X = { stiffness: 1400, damping: 75, mass: 1, overshootClamping: true }; // critically damped: glides, never wobbles
+  const SPR_R = { stiffness: 900, damping: 42, mass: 1 }; // slight overshoot on turns: juicy but still clean
+  const ghostTo = (p) => {
+    const cell = G.cell || 30;
+    let gp = p;
+    while (valid(G.board, { ...gp, r: gp.r + 1 })) gp = { ...gp, r: gp.r + 1 };
+    const e = { duration: 90, easing: REasing.out(REasing.cubic) };
+    svGX.value = withTiming(2 + gp.c * cell, e);
+    svGY.value = withTiming(2 + gp.r * cell, e);
+  };
   G.fx = {
     burst() { svBurst.value = 0; svBurst.value = withTiming(1, { duration: 280 }); },
     cheer() { cheer.setValue(0); Animated.timing(cheer, { toValue: 1, duration: 800, easing: Easing.linear, useNativeDriver: true }).start(); },
-    fallY(px) { svFallY.value = -px; svFallY.value = withTiming(0, { duration: 90 }); },
     fall(max) { const T = fallMs(max) + 300; svFall.value = 0; svFall.value = withTiming(T, { duration: T, easing: REasing.linear }); },
+    // new piece: jump straight to the spawn pose (no tween)
+    snap(p) {
+      const cell = G.cell || 30;
+      G.ang = p.o * (Math.PI / 2);
+      G.vx = 0;
+      G.vy = 0;
+      svPX.value = 2 + p.c * cell;
+      svPY.value = 2 + p.r * cell;
+      svPR.value = G.ang;
+      let gp = p;
+      while (valid(G.board, { ...gp, r: gp.r + 1 })) gp = { ...gp, r: gp.r + 1 };
+      svGX.value = 2 + gp.c * cell;
+      svGY.value = 2 + gp.r * cell;
+      svGR.value = G.ang;
+    },
+    // engine moved the piece: animate the picture to match. kind: x | rot | fall | soft | hard
+    pose(p, kind, arg) {
+      const cell = G.cell || 30;
+      const now = Date.now();
+      const x = 2 + p.c * cell;
+      const y = 2 + p.r * cell;
+      if (kind === 'x' || kind === 'rot') {
+        svPX.value = withSpring(x, SPR_X);
+        G.vx = Math.max(G.vx || 0, now + 110);
+      }
+      if (kind === 'rot') {
+        G.ang = (G.ang || 0) + arg * (Math.PI / 2);
+        svPR.value = withSpring(G.ang, SPR_R);
+        svGR.value = withSpring(G.ang, SPR_R);
+        svPY.value = withSpring(y, SPR_X); // wall/floor kicks move the pivot
+        G.vy = now + 110;
+        G.vx = Math.max(G.vx || 0, now + 150);
+      } else if (kind === 'fall') {
+        const ms = Math.max(60, (arg || 300) * 0.96);
+        svPY.value = withTiming(y, { duration: ms, easing: REasing.linear }); // one continuous glide per row
+        G.vy = now + ms;
+      } else if (kind === 'soft') {
+        svPY.value = withTiming(y, { duration: 62, easing: REasing.linear });
+        G.vy = now + 62;
+      } else if (kind === 'hard') {
+        const d = arg > 0 ? Math.min(150, 55 + 12 * arg) : 0;
+        svPY.value = d ? withTiming(y, { duration: d, easing: REasing.in(REasing.quad) }) : y;
+        G.vy = now + d;
+      }
+      if (kind === 'x' || kind === 'rot') ghostTo(p);
+    },
+    // called by lock(): decide what stays hidden on the board until the picture has landed
+    preLock(p) {
+      const cell = G.cell || 30;
+      const now = Date.now();
+      if ((G.vy || 0) - now > 130) {
+        svPY.value = withTiming(2 + p.r * cell, { duration: 110, easing: REasing.in(REasing.quad) });
+        G.vy = now + 110;
+      }
+      G.slam = new Set(cellsOf(p).map(([r, c]) => r * COLS + c));
+      G.slamMs = Math.max(0, Math.max(G.vx || 0, G.vy || 0) - now);
+    },
+    land() {
+      svLand.value = 0;
+      svLand.value = withTiming(420, { duration: 420, easing: REasing.linear });
+      const id = G.landId;
+      setTimeout(() => {
+        if (G.landId === id) {
+          G.landKeys = null;
+          render();
+        }
+      }, 480);
+    },
+    sync() {
+      if (G.piece) ghostTo(G.piece);
+    },
   };
   const bannerScale = useRef(new Animated.Value(0)).current;
   const np = () => {
@@ -1826,6 +2626,7 @@ function Game() {
     G.popping = new Set();
     G.placed = 0;
     G.piece = spawn(G.next);
+    if (G.fx) G.fx.snap(G.piece);
     shiftQueue();
     G.status = 'playing';
     render();
@@ -2000,6 +2801,7 @@ function Game() {
       G.continued = true;
       G.status = 'playing';
       G.piece = spawn(G.next);
+      if (G.fx) G.fx.snap(G.piece);
       shiftQueue();
     });
   const adStar = () =>
@@ -2119,6 +2921,14 @@ function Game() {
     const wasDanger = G.board.slice(0, 4).some((row) => row.some(Boolean));
     const feverAtLock = G.feverPcs > 0;
     render();
+    if (G.slam) {
+      await sleep(G.slamMs || 0); // let the picture finish landing, then swap to board orbs
+      G.landKeys = G.slam;
+      G.landId = (G.landId || 0) + 1;
+      G.slam = null;
+      if (G.fx) G.fx.land();
+      render();
+    }
     while (alive.current) {
       const fm = fallMap(G.board);
       if (gravity(G.board)) {
@@ -2268,6 +3078,7 @@ function Game() {
       return;
     }
     G.piece = p;
+    if (G.fx) G.fx.snap(G.piece);
     shiftQueue();
     G.status = 'playing';
     render();
@@ -2275,9 +3086,14 @@ function Game() {
 
   const lock = () => {
     G.lockAt = 0;
-    buzz(0);
-    sfx('land');
-    Animated.sequence([Animated.timing(punch,{toValue:0.88,duration:60,useNativeDriver:true}),Animated.spring(punch,{toValue:1,friction:3,useNativeDriver:true})]).start();
+    if (G.fx && G.piece) G.fx.preLock(G.piece);
+    const landFx = () => {
+      buzz(0);
+      sfx('land');
+      Animated.sequence([Animated.timing(punch,{toValue:0.972,duration:60,useNativeDriver:true}),Animated.spring(punch,{toValue:1,friction:3,useNativeDriver:true})]).start();
+    };
+    if (G.fx && G.slamMs > 0) setTimeout(landFx, G.slamMs);
+    else landFx();
     G.snap = {
       board: G.board.map((row) => row.slice()),
       score: G.score,
@@ -2315,17 +3131,14 @@ function Game() {
     resolve();
   };
 
-  const step = (force) => {
+  const step = (force, glide) => {
     if (G.status !== 'playing' || !G.piece) return false;
     const p2 = { ...G.piece, r: G.piece.r + 1 };
     if (valid(G.board, p2)) {
       if (!force) G.log += 'd';
       G.piece = p2;
       G.lockAt = 0;
-      fallY.setValue(-(G.cell || 30));
-      Animated.timing(fallY, { toValue: 0, duration: 90, useNativeDriver: true }).start();
-      if (G.fx) G.fx.fallY(G.cell || 30);
-      render();
+      if (G.fx) G.fx.pose(p2, force ? 'soft' : 'fall', glide);
       return true;
     }
     if (force || (G.lockAt && Date.now() - G.lockAt >= 350)) {
@@ -2360,7 +3173,7 @@ function Game() {
     const p2 = { ...G.piece, c: G.piece.c + dx };
     if (valid(G.board, p2)) {
       G.piece = bumpLock(p2);
-      render();
+      if (G.fx) G.fx.pose(G.piece, 'x');
     }
   };
 
@@ -2371,7 +3184,7 @@ function Game() {
     const p2 = tryRotate(G.board, G.piece, dir);
     if (p2) {
       G.piece = bumpLock(p2);
-      render();
+      if (G.fx) G.fx.pose(G.piece, 'rot', dir);
     }
   };
 
@@ -2387,6 +3200,7 @@ function Game() {
       n++;
     }
     G.score += n * 2;
+    if (G.fx) G.fx.pose(G.piece, 'hard', n);
     lock();
   };
 
@@ -2398,7 +3212,7 @@ function Game() {
       },
       onPanResponderMove: (_, g) => {
         const dx = g.dx - G.gx;
-        if (Math.abs(dx) >= G.cell) {
+        if (Math.abs(dx) >= G.cell * 0.55) {
           move(dx > 0 ? 1 : -1);
           G.gx += dx > 0 ? G.cell : -G.cell;
         }
@@ -2438,6 +3252,7 @@ function Game() {
       G.next2 = G.next;
       G.next = { a: G.piece.a, b: G.piece.b };
       G.piece = spawn({ a: G.snap.a, b: G.snap.b });
+      if (G.fx) G.fx.snap(G.piece);
       G.snap = null;
     } else if (id === 'gorilla') {
       let best = 0;
@@ -2468,6 +3283,7 @@ function Game() {
     G.used[id] = true;
     buzz(3);
     jingle([4, 6, 9], 70);
+    if (G.fx) G.fx.sync();
     render();
   };
 
@@ -2561,9 +3377,11 @@ function Game() {
       ])
     ).start();
     svFloat.value = withRepeat(withTiming(1, { duration: 2600, easing: REasing.inOut(REasing.ease) }), -1, true);
+    svPulse.value = withRepeat(withTiming(1, { duration: 800, easing: REasing.inOut(REasing.ease) }), -1, true);
+    svClock.value = withRepeat(withTiming(1, { duration: 24000, easing: REasing.linear }), -1, false);
     let t;
     const loop = () => {
-      if (!G.replay) step();
+      if (!G.replay) step(false, speed());
       t = setTimeout(loop, speed());
     };
     t = setTimeout(loop, 700);
@@ -2574,10 +3392,13 @@ function Game() {
   }, []);
 
   /* ---------- draw ---------- */
+  const hs = width / 768; // mockup scale
+  const hudH = Math.round(hs * 168);
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - HUD_H - BOARD_BOTTOM - 8) / ROWS))
+    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - hudH - BOARD_BOTTOM - 8) / ROWS))
   );
+  const boardTop = height - BOARD_BOTTOM - (cell * ROWS + 8);
 
   G.cell = cell;
   const danger = G.board.slice(0, 4).some((row) => row.some(Boolean));
@@ -2637,22 +3458,20 @@ function Game() {
     }
   }
 
-  let ghost = [];
-  if (G.piece) {
-    let gp = G.piece;
-    while (valid(G.board, { ...gp, r: gp.r + 1 })) gp = { ...gp, r: gp.r + 1 };
-    if (gp.r !== G.piece.r) ghost = cellsOf(gp);
-  }
+  const ghost = []; // legacy View renderer only; v19 ghost lives in PieceLayer
+  if (G.piece) G.pvLast = { a: G.piece.a, b: G.piece.b };
+  const pvPair = G.piece || G.slam ? G.pvLast : null;
 
   return (
     <View style={[styles.root, { backgroundColor: T.bg }]}>
       <StatusBar barStyle="light-content" />
       <View pointerEvents="none" style={ABS_FILL}>
-        {skyBands(T.sky).map((c, i) => (
+        {realm === 0 && <ForestScene W={width} H={height} clock={svClock} />}
+        {realm !== 0 && skyBands(T.sky).map((c, i) => (
           <View key={i} style={{ flex: 1, backgroundColor: c }} />
         ))}
-        <Scene realm={realm} width={width} height={height} />
-        {[
+        {realm !== 0 && <Scene realm={realm} width={width} height={height} />}
+        {realm !== 0 && [
           { l: '-10%', t: '8%', z: 180, o: 0.10 },
           { l: '60%', t: '30%', z: 140, o: 0.09 },
           { l: '15%', t: '62%', z: 220, o: 0.08 },
@@ -2669,21 +3488,19 @@ function Game() {
       <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: BOARD_BACK }]} />
 
       {G.status !== 'menu' && !!G.coach && (
-        <Text pointerEvents="none" style={[styles.coachFloat, { top: STATUS_H + 120 + cell * 2 }]}>
-          {G.coach}
-        </Text>
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: boardTop + cell * 1.7, alignItems: 'center' }}>
+          <View style={{ width: width * 0.86, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}>
+            <Sparkles w={width * 0.86} h={Math.round(width * 0.066) * 3.4} tw={svFloat} />
+            <Text style={[styles.coachFloat2, { fontSize: Math.round(width * 0.066), lineHeight: Math.round(width * 0.078), maxWidth: width * 0.78 }]}>{G.coach}</Text>
+          </View>
+        </View>
       )}
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <View style={{ position: 'absolute', left: 6, top: 52, width: RAIL_W, alignItems: 'center', zIndex: 5 }}>
-          <View style={styles.nextRail}>
-            <Text style={styles.nextLbl}>NEXT</Text>
-            <Orb color={G.next.b} size={28} />
-            <Orb color={G.next.a} size={28} />
-            <View style={{ marginTop: 4, opacity: 0.55 }}>
-              <Orb color={G.next2.b} size={20} />
-              <Orb color={G.next2.a} size={20} />
-            </View>
+        <View style={{ position: 'absolute', left: Math.round(40 * hs), top: 6, width: Math.round(100 * hs), alignItems: 'center', zIndex: 5 }}>
+          <View style={{ width: Math.round(100 * hs), height: Math.round(312 * hs), marginBottom: 4 }}>
+            <NextArt s={hs} orbs={[G.next.b, G.next.a, G.next2.b]} skin={SKIN} />
+            <Text pointerEvents="none" style={[styles.nextLbl2, { top: Math.round(34 * hs), fontSize: Math.round(22 * hs) }]}>NEXT</Text>
           </View>
           {ORBLINGS.map((o, i) => {
             const owned = totalStars(G.stars) >= o.need;
@@ -2721,10 +3538,13 @@ function Game() {
           {USE_SKIA && (
             <BoardCanvas
               board={display} cell={cell} skin={SKIN} popping={G.popping} fall={G.fall} fallId={G.fallId || 0}
-              rings={G.rings} ghost={ghost} glow={glowSet} piece={G.piece} danger={danger}
+              rings={G.rings} glow={glowSet} danger={danger} hide={G.slam} landKeys={G.landKeys} landId={G.landId || 0}
               playing={G.status === 'playing'} accent={T.accent}
-              sv={{ float: svFloat, burst: svBurst, flash: svFlash, fallY: svFallY, fall: svFall }}
+              sv={{ float: svFloat, burst: svBurst, flash: svFlash, fall: svFall, land: svLand }}
             />
+          )}
+          {USE_SKIA && (
+            <PieceLayer a={pvPair ? pvPair.a : 0} b={pvPair ? pvPair.b : 0} cell={cell} W={cell * COLS + 2} H={cell * ROWS + 2} danger={danger} skin={SKIN} pv={pvObj} />
           )}
           {!USE_SKIA && (<>
           {display.map((row, r) => (
@@ -3244,80 +4064,74 @@ function Game() {
         </View>
       )}
 
-      {G.status !== 'menu' && G.status !== 'shop' && (
-        <View style={[styles.hudBar, { top: STATUS_H - 2 }]}>
-          <View style={styles.hudL}>
-            <View style={{ width: 56, height: 56, alignItems: 'center', justifyContent: 'center' }}>
-              <View style={{ position: 'absolute', width: 40, height: 40, borderRadius: 9, backgroundColor: '#d9a13f' }} />
-              <View style={{ position: 'absolute', width: 40, height: 40, borderRadius: 9, backgroundColor: '#f6cf74', transform: [{ rotate: '45deg' }] }} />
-              <View style={styles.badge}>
-                <Text style={styles.badgeLbl}>LV</Text>
-                <Text style={styles.badgeNum}>{G.level}</Text>
-              </View>
+      {G.status !== 'menu' && G.status !== 'shop' && (() => {
+        const at = (cx, cy, w, h) => ({ position: 'absolute', left: (cx - w / 2) * hs, top: (cy - h / 2) * hs, width: w * hs, height: h * hs, alignItems: 'center', justifyContent: 'center' });
+        const feverLbl = G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER';
+        return (
+          <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: STATUS_H - 2, height: hudH, zIndex: 20 }}>
+            <HudArt w={width} h={hudH} goal={progress()} fever={G.fever / 100} feverOn={G.feverPcs > 0} muted={MUTED} />
+            <View pointerEvents="none" style={at(70, 64, 70, 28)}><Text style={[styles.hudTxt, { color: '#ffd36b', fontSize: 23 * hs }]}>LV</Text></View>
+            <View pointerEvents="none" style={at(70, 102, 80, 60)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { fontSize: 56 * hs }]}>{G.level}</Text></View>
+            <View pointerEvents="none" style={at(236, 68, 130, 36)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { color: '#fff3d0', fontSize: 27 * hs }]}>{goalText()}</Text></View>
+            <View pointerEvents="none" style={at(236, 128, 130, 36)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { color: '#ffffff', fontSize: 27 * hs, textShadowColor: 'rgba(160,70,0,0.95)', textShadowRadius: 4 }]}>{feverLbl}</Text></View>
+            <View pointerEvents="none" style={at(684, 66, 138, 40)}>
+              <Text adjustsFontSizeToFit numberOfLines={1} style={styles.hudTxt}>
+                <Text style={{ color: '#ffe2a8', fontSize: 19 * hs }}>SCORE </Text>
+                <Text style={{ fontSize: 31 * hs }}>{G.score}</Text>
+              </Text>
             </View>
-            <View style={{ width: 84, marginLeft: 6 }}>
-              <View style={styles.stat}>
-                <View style={[styles.statFill, { width: `${Math.min(100, Math.max(0, progress() * 100))}%`, backgroundColor: T.accent }]} />
-                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>{goalText()}</Text>
-              </View>
-              <View style={[styles.stat, { marginTop: 4 }]}>
-                <View style={[styles.statFill, { width: `${G.feverPcs > 0 ? 100 : Math.min(100, G.fever)}%`, backgroundColor: '#ffb020' }]} />
-                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statTxt}>
-                  {G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER'}
-                </Text>
-              </View>
-            </View>
+            <View pointerEvents="none" style={at(488, 129, 46, 36)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { fontSize: 29 * hs }]}>{G.shards}</Text></View>
+            <View pointerEvents="none" style={at(586, 129, 46, 36)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { fontSize: 29 * hs }]}>{totalStars(G.stars)}</Text></View>
+            <Pressable hitSlop={8} onPress={pause} style={at(651, 129, 64, 64)} />
+            <Pressable
+              hitSlop={8}
+              style={at(722, 129, 64, 64)}
+              onPress={() => {
+                MUTED = !MUTED;
+                AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
+                render();
+              }}
+            />
           </View>
-          <View style={styles.hudR}>
-            <View style={styles.pill}>
-              <Text style={styles.pillLbl}>SCORE</Text>
-              <Text style={styles.pillNum}>{G.score}</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-              <View style={[styles.pill, { marginRight: 4, paddingHorizontal: 6, backgroundColor: 'rgba(150,40,175,0.92)' }]}>
-                <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
-                <Text style={styles.pillNum}>{G.shards}</Text>
-              </View>
-              <View style={[styles.pill, { paddingHorizontal: 6, backgroundColor: 'rgba(80,55,185,0.92)' }]}>
-                <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
-                <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
-              </View>
-              <Pressable hitSlop={8} style={[styles.ico, { width: 30, height: 30, borderRadius: 15 }]} onPress={pause}>
-                <Text style={styles.icoTxt}>⏸</Text>
-              </Pressable>
-              <Pressable
-                hitSlop={8}
-                style={[styles.ico, { width: 30, height: 30, borderRadius: 15 }]}
-                onPress={() => {
-                  MUTED = !MUTED;
-                  AsyncStorage.setItem('muted', MUTED ? '1' : '0').catch(() => {});
-                  render();
-                }}
-              >
-                <Text style={styles.icoTxt}>{MUTED ? '🔇' : '🔊'}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      )}
+        );
+      })()}
 
       {showCtl && (
       <>
-      <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - 150, minY: -(height - 230), maxY: 0 }}>
-        <View style={styles.dpad}>
-          <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={[styles.dArm, { left: 6, top: 43 }]} />
-          <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={[styles.dArm, { right: 6, top: 43 }]} />
-          <HoldButton dim={G.status !== 'playing'} label="▲" onPress={() => rotate(1)} style={[styles.dArm, { left: 43, top: 6 }]} />
-          <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={[styles.dArm, { left: 43, bottom: 6 }]} />
-        </View>
-      </FloatPad>
-      <FloatPad id="R" anchor="right" bounds={{ minX: -(width - 170), maxX: 0, minY: -(height - 260), maxY: 0 }}>
-        <View style={styles.acts}>
-          <HoldButton dim={G.status !== 'playing'} label="⟲" onPress={() => rotate(-1)} style={[styles.act, { left: 0, bottom: 4, width: 52, height: 52, borderRadius: 26 }]} textStyle={{ fontSize: 24 }} />
-          <HoldButton dim={G.status !== 'playing'} label={'⟳\nTURN'} onPress={() => rotate(1)} style={[styles.act, { right: 8, top: 0, width: 60, height: 60, borderRadius: 30 }]} textStyle={styles.actTxt} />
-          <HoldButton dim={G.status !== 'playing'} label={'▼\nDROP'} onPress={hardDrop} style={[styles.act, styles.actDrop, { right: 0, bottom: 0, width: 76, height: 76, borderRadius: 38 }]} textStyle={styles.actTxt} />
-        </View>
-      </FloatPad>
+      {(() => {
+        const padSz = Math.round(320 * hs);
+        const k = padSz / 320;
+        const actSz = Math.round(300 * hs);
+        const ka = actSz / 300;
+        const on = G.status === 'playing';
+        const zone = (cx, cy, r) => ({ position: 'absolute', left: (cx - r) * k, top: (cy - r) * k, width: r * 2 * k, height: r * 2 * k, borderRadius: r * k });
+        const zoneA = (cx, cy, r) => ({ position: 'absolute', left: (cx - r) * ka, top: (cy - r) * ka, width: r * 2 * ka, height: r * 2 * ka, borderRadius: r * ka, alignItems: 'center', justifyContent: 'flex-end' });
+        return (
+          <>
+            <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - padSz - 24, minY: -(height - padSz - 120), maxY: 0 }}>
+              <View style={{ width: padSz, height: padSz, opacity: on ? 1 : 0.55 }}>
+                <PadArt size={padSz} pu={pU} pl={pL} pr={pR} pd={pD} />
+                <HoldButton dim={!on} press={pU} onPress={() => rotate(1)} style={zone(160, 95, 42)} />
+                <HoldButton dim={!on} press={pL} onPress={() => move(-1)} repeat repeatMs={64} style={zone(96, 160, 42)} />
+                <HoldButton dim={!on} press={pR} onPress={() => move(1)} repeat repeatMs={64} style={zone(224, 160, 42)} />
+                <HoldButton dim={!on} press={pD} onPress={softDrop} repeat repeatMs={56} style={zone(160, 225, 42)} />
+              </View>
+            </FloatPad>
+            <FloatPad id="R" anchor="right" bounds={{ minX: -(width - actSz - 24), maxX: 0, minY: -(height - actSz - 120), maxY: 0 }}>
+              <View style={{ width: actSz, height: actSz, opacity: on ? 1 : 0.55 }}>
+                <ActArt size={actSz} pUndo={pUndo} pTurn={pTurn} pDrop={pDrop} pulse={svPulse} />
+                <HoldButton dim={!on} press={pUndo} onPress={() => rotate(-1)} style={zoneA(ACT.undo[0], ACT.undo[1], ACT.undo[2])} />
+                <HoldButton dim={!on} press={pTurn} onPress={() => rotate(1)} style={zoneA(ACT.turn[0], ACT.turn[1], ACT.turn[2])}>
+                  <Text style={[styles.actLbl2, { fontSize: 31 * ka, marginBottom: 20 * ka }]}>TURN</Text>
+                </HoldButton>
+                <HoldButton dim={!on} press={pDrop} onPress={hardDrop} style={zoneA(ACT.drop[0], ACT.drop[1], ACT.drop[2])}>
+                  <Text style={[styles.actLbl2, { fontSize: 35 * ka, marginBottom: 22 * ka }]}>DROP</Text>
+                </HoldButton>
+              </View>
+            </FloatPad>
+          </>
+        );
+      })()}
       </>
       )}
       {G.ad && (
@@ -3461,7 +4275,7 @@ const styles = StyleSheet.create({
   dropTxt: { fontSize: 17, fontFamily: FONT, letterSpacing: 1 },
   padL: { position: 'absolute', left: 8, bottom: BOTTOM_PAD, alignItems: 'flex-start' },
   padR: { position: 'absolute', right: 8, bottom: BOTTOM_PAD, alignItems: 'flex-end' },
-  grip: { alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.4)', marginBottom: 2 },
+  grip: { alignSelf: 'center', paddingHorizontal: 26, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(10,8,34,0.5)', marginBottom: 2 },
   gripOn: { backgroundColor: 'rgba(255,210,59,0.95)' },
   padEdit: { borderRadius: 18, borderWidth: 2, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.8)', backgroundColor: 'rgba(255,255,255,0.10)' },
   gripTxt: { color: 'rgba(255,255,255,0.85)', fontSize: 12, letterSpacing: 2, fontWeight: '900' },
@@ -3469,6 +4283,13 @@ const styles = StyleSheet.create({
   icoTxt: { color: '#fff', fontSize: 17 },
   fbtn: { flex: 0, width: 48, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: 'rgba(25,12,70,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.7)' },
   fdrop: { flex: 0, width: 66, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: '#ff3b6b', borderWidth: 2, borderColor: '#ffd0dc', borderBottomColor: '#a3123a' },
+  // v19
+  hudTxt: { fontFamily: FONT, color: '#ffffff', textAlign: 'center', textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
+  nextLbl2: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#f2fbff', fontFamily: FONT, letterSpacing: 1, textShadowColor: 'rgba(20,60,140,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  coachFloat2: { textAlign: 'center', color: '#fff0c8', fontFamily: FONT, textShadowColor: '#6b3a12', textShadowOffset: { width: 0, height: 3 }, textShadowRadius: 6 },
+  actLbl2: { color: '#ffffff', fontFamily: FONT, letterSpacing: 0.5, textShadowColor: 'rgba(60,10,20,0.95)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 2 },
+  gripDots: { width: 17, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', height: 17, alignContent: 'space-between' },
+  gripDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.8)' },
 });
 
 
