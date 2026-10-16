@@ -138,7 +138,7 @@ function findGroups(b) {
 
 /* ============================== REALMS & LEVELS ============================== */
 const REALMS = [
-  { name: 'SUNRISE MEADOW', bg: '#ff6f91', sky: ['#ffb36b', '#ff6f91', '#7b4bd6'], board: 'rgba(40,10,60,0.50)', border: '#ffd36b', accent: '#ffd36b' },
+  { name: 'TWILIGHT GROVE', bg: '#1b1a5e', sky: ['#161552', '#3c2a86', '#a63f93'], board: 'rgba(40,10,60,0.50)', border: '#ffd36b', accent: '#ffd36b' },
   { name: 'MOONLIT LAKE', bg: '#2a7fd4', sky: ['#35d0c4', '#2a7fd4', '#3b3fb5'], board: 'rgba(5,20,70,0.50)', border: '#7ff3e0', accent: '#7ff3e0' },
   { name: 'FROST PEAKS', bg: '#5aa2f0', sky: ['#a8e0ff', '#5aa2f0', '#4a5fd0'], board: 'rgba(10,25,80,0.45)', border: '#e6f6ff', accent: '#ffffff' },
   { name: 'NEON CITY', bg: '#8a3bff', sky: ['#ff4fd8', '#8a3bff', '#2a1a7a'], board: 'rgba(15,5,50,0.55)', border: '#ff9bec', accent: '#ff9bec' },
@@ -1003,6 +1003,15 @@ const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, act
             <RoundedRect x={ex + ew + s * 0.12} y={ey} width={ew} height={eh} r={Math.min(ew, eh) / 2} color="#14142a" />
           </>
         )}
+        {face && !popping && (
+          <>
+            <Circle cx={ex + ew * 0.7} cy={ey + eh * 0.3} r={s * 0.02} color="rgba(255,255,255,0.95)" />
+            <Circle cx={ex + ew + s * 0.12 + ew * 0.7} cy={ey + eh * 0.3} r={s * 0.02} color="rgba(255,255,255,0.95)" />
+            <Circle cx={ex - s * 0.03} cy={ey + eh + s * 0.05} r={s * 0.055} color="rgba(255,110,170,0.42)" />
+            <Circle cx={ex + 2 * ew + s * 0.12 + s * 0.03} cy={ey + eh + s * 0.05} r={s * 0.055} color="rgba(255,110,170,0.42)" />
+            {!worry && <Path path={svgPath(`M${ox + iw / 2 - s * 0.09} ${ey + eh + s * 0.07}Q${ox + iw / 2} ${ey + eh + s * 0.17} ${ox + iw / 2 + s * 0.09} ${ey + eh + s * 0.07}`)} style="stroke" strokeWidth={s * 0.035} color="#14142a" />}
+          </>
+        )}
         {face && popping && (
           <>
             <Path path={svgPath(`M${mx} ${my}L${mx + mw} ${my}A${mw / 2} ${mh} 0 0 1 ${mx} ${my}Z`)} color="rgba(255,120,140,0.9)" />
@@ -1152,14 +1161,14 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
       </Group>
 
       {Array.from({ length: ROWS - 1 }, (_, i) => (
-        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,255,255,0.08)" />
+        <Rect key={`hr${i}`} x={2} y={2 + (i + 1) * cell} width={W - 4} height={1} color="rgba(255,150,230,0.20)" />
       ))}
       {Array.from({ length: COLS - 1 }, (_, i) => (
-        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,255,255,0.08)" />
+        <Rect key={`vc${i}`} x={2 + (i + 1) * cell} y={2} width={1} height={H - 4} color="rgba(255,150,230,0.20)" />
       ))}
-      <Rect x={1.5} y={2} width={1.5} height={H - 4} color="rgba(255,255,255,0.16)" />
-      <Rect x={W - 3} y={2} width={1.5} height={H - 4} color="rgba(255,255,255,0.16)" />
-      <Rect x={2} y={H - 3} width={W - 4} height={1.5} color="rgba(255,255,255,0.16)" />
+      <Rect x={1.5} y={2} width={1.5} height={H - 4} color="rgba(255,170,235,0.42)" />
+      <Rect x={W - 3} y={2} width={1.5} height={H - 4} color="rgba(255,170,235,0.42)" />
+      <Rect x={2} y={H - 3} width={W - 4} height={1.5} color="rgba(255,170,235,0.42)" />
 
       <Group opacity={glowOp}>
         {[...glow].map((k) => {
@@ -1171,7 +1180,11 @@ function BoardCanvas({ board, cell, skin, popping, fall, fallId, rings, ghost, g
       </Group>
 
       {ghost.map(([r, c, col]) => (
-        <Circle key={`g${r}-${c}`} cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.38 - 1} style="stroke" strokeWidth={2} color={COLORS[col]} opacity={0.4} />
+        <Group key={`g${r}-${c}`}>
+          <Circle cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.38 - 1} style="stroke" strokeWidth={2.5} color={COLORS[col]} opacity={0.8} />
+          <Circle cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.46} style="stroke" strokeWidth={1} color={COLORS[col]} opacity={0.45} />
+          <Circle cx={2 + c * cell + cell / 2} cy={2 + r * cell + cell / 2} r={cell * 0.29} style="stroke" strokeWidth={1} color={COLORS[col]} opacity={0.4} />
+        </Group>
       ))}
 
       <RoundedRect x={0} y={0} width={W} height={H} r={10} color={accent} opacity={flash} />
@@ -1226,11 +1239,39 @@ function Scene({ realm, width, height }) {
     borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: color,
   });
   if (realm === 0) {
+    const stars = Array.from({ length: 30 }, (_, i) => ({
+      x: ((i * 37 + 11) % 97) / 97 * W,
+      y: ((i * 53 + 7) % 61) / 100 * height,
+      z: 2 + (i % 3),
+      o: 0.45 + ((i * 17) % 50) / 100,
+    }));
+    const bush = [[-0.05, 90, 70], [0.12, 110, 90], [0.3, 80, 60], [0.55, 100, 80], [0.74, 120, 100], [0.92, 90, 70]];
+    const fire = [[0.12, 0.74, '#ffe98a'], [0.28, 0.82, '#7ff3e0'], [0.46, 0.78, '#ffe98a'], [0.63, 0.86, '#ff9bec'], [0.8, 0.76, '#7ff3e0'], [0.9, 0.84, '#ffe98a'], [0.2, 0.9, '#ff9bec'], [0.7, 0.92, '#ffe98a']];
+    const ember = [[0.18, 0.5], [0.34, 0.42], [0.78, 0.46], [0.86, 0.58], [0.1, 0.62], [0.64, 0.36]];
     return (
       <>
-        <View style={{ position: 'absolute', right: 26, top: 64, width: 84, height: 84, borderRadius: 84, backgroundColor: '#fff3b0', opacity: 0.92 }} />
-        <View style={{ position: 'absolute', left: -W * 0.15, bottom: -150, width: W * 1.1, height: 260, borderRadius: 260, backgroundColor: '#8fe05a' }} />
-        <View style={{ position: 'absolute', left: W * 0.35, bottom: -170, width: W * 1.1, height: 260, borderRadius: 260, backgroundColor: '#4fbf5a' }} />
+        <View style={{ position: 'absolute', right: -30, top: 30, width: 190, height: 190, borderRadius: 190, backgroundColor: 'rgba(190,210,255,0.14)' }} />
+        <View style={{ position: 'absolute', right: 8, top: 70, width: 100, height: 100, borderRadius: 100, backgroundColor: 'rgba(225,235,255,0.20)' }} />
+        {stars.map((st, i) => (
+          <View key={`s${i}`} style={{ position: 'absolute', left: st.x, top: st.y, width: st.z, height: st.z, borderRadius: st.z, backgroundColor: '#fff', opacity: st.o }} />
+        ))}
+        <View style={tri(-40, 120, 210, '#0e2a45', 0)} />
+        <View style={tri(W - 150, 120, 240, '#0e2a45', 0)} />
+        <View style={tri(W * 0.5 - 60, 90, 150, '#102f48', 0)} />
+        <View style={{ position: 'absolute', left: -W * 0.1, bottom: -120, width: W * 1.2, height: 240, borderRadius: 240, backgroundColor: '#1d6b4a' }} />
+        <View style={{ position: 'absolute', left: W * 0.1, bottom: -150, width: W * 1.1, height: 240, borderRadius: 240, backgroundColor: '#2a9a55' }} />
+        {bush.map(([x, w, h], i) => (
+          <View key={`b${i}`} style={{ position: 'absolute', left: W * x, bottom: -h * 0.35, width: w, height: h, borderRadius: w, backgroundColor: i % 2 ? '#0c3a3f' : '#0a2f3a' }} />
+        ))}
+        {fire.map(([x, y, c], i) => (
+          <View key={`f${i}`} style={{ position: 'absolute', left: W * x, top: height * y }}>
+            <View style={{ position: 'absolute', left: -6, top: -6, width: 16, height: 16, borderRadius: 16, backgroundColor: c, opacity: 0.22 }} />
+            <View style={{ width: 4, height: 4, borderRadius: 4, backgroundColor: c, opacity: 0.95 }} />
+          </View>
+        ))}
+        {ember.map(([x, y], i) => (
+          <View key={`e${i}`} style={{ position: 'absolute', left: W * x, top: height * y, width: 3, height: 7, borderRadius: 3, backgroundColor: 'rgba(255,150,60,0.8)', transform: [{ rotate: '35deg' }] }} />
+        ))}
       </>
     );
   }
@@ -1445,8 +1486,8 @@ const CONTROLS_H = 86;
 const HUD_H = 62; // compact HUD band at the top of the one window
 const STATUS_H = (StatusBar.currentHeight || 24) + 6; // same as styles.root paddingTop
 const RAIL_W = 46; // left rail: NEXT + orblings
-const DIM = 'rgba(14,9,42,0.22)'; // light tint over the scene art
-const BOARD_BACK = 'rgba(10,6,34,0.30)'; // glass backing behind the columns so orbs stay readable on the art
+const DIM = 'rgba(14,9,42,0.06)'; // light tint over the scene art
+const BOARD_BACK = 'rgba(10,6,34,0.12)'; // glass backing behind the columns so orbs stay readable on the art
 const BOARD_BG = '#130e2e';
 
 const hex2rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -2302,13 +2343,23 @@ function Game() {
     if (step(true)) G.score += 1;
   };
 
+  // sliding a resting piece buys a fresh lock window (max 6 per piece) so it cannot lock mid-slide
+  const bumpLock = (p2) => {
+    const n = G.piece.lr || 0;
+    if (G.lockAt && n < 6) {
+      G.lockAt = 0;
+      p2.lr = n + 1;
+    } else p2.lr = n;
+    return p2;
+  };
+
   const move = (dx) => {
     if (G.replay && !G.rp) return;
     if (G.status !== 'playing' || !G.piece) return;
     G.log += dx > 0 ? 'R' : 'L';
     const p2 = { ...G.piece, c: G.piece.c + dx };
     if (valid(G.board, p2)) {
-      G.piece = p2;
+      G.piece = bumpLock(p2);
       render();
     }
   };
@@ -2319,7 +2370,7 @@ function Game() {
     G.log += dir > 0 ? 'c' : 'w';
     const p2 = tryRotate(G.board, G.piece, dir);
     if (p2) {
-      G.piece = p2;
+      G.piece = bumpLock(p2);
       render();
     }
   };
@@ -3196,9 +3247,13 @@ function Game() {
       {G.status !== 'menu' && G.status !== 'shop' && (
         <View style={[styles.hudBar, { top: STATUS_H - 2 }]}>
           <View style={styles.hudL}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeLbl}>LV</Text>
-              <Text style={styles.badgeNum}>{G.level}</Text>
+            <View style={{ width: 56, height: 56, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ position: 'absolute', width: 40, height: 40, borderRadius: 9, backgroundColor: '#d9a13f' }} />
+              <View style={{ position: 'absolute', width: 40, height: 40, borderRadius: 9, backgroundColor: '#f6cf74', transform: [{ rotate: '45deg' }] }} />
+              <View style={styles.badge}>
+                <Text style={styles.badgeLbl}>LV</Text>
+                <Text style={styles.badgeNum}>{G.level}</Text>
+              </View>
             </View>
             <View style={{ width: 84, marginLeft: 6 }}>
               <View style={styles.stat}>
@@ -3219,11 +3274,11 @@ function Game() {
               <Text style={styles.pillNum}>{G.score}</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-              <View style={[styles.pill, { marginRight: 4, paddingHorizontal: 6 }]}>
+              <View style={[styles.pill, { marginRight: 4, paddingHorizontal: 6, backgroundColor: 'rgba(150,40,175,0.92)' }]}>
                 <Text style={[styles.pillIco, { color: '#5be0ff' }]}>◆</Text>
                 <Text style={styles.pillNum}>{G.shards}</Text>
               </View>
-              <View style={[styles.pill, { paddingHorizontal: 6 }]}>
+              <View style={[styles.pill, { paddingHorizontal: 6, backgroundColor: 'rgba(80,55,185,0.92)' }]}>
                 <Text style={[styles.pillIco, { color: '#ffd23b' }]}>★</Text>
                 <Text style={styles.pillNum}>{totalStars(G.stars)}</Text>
               </View>
@@ -3252,6 +3307,7 @@ function Game() {
         <View style={styles.dpad}>
           <HoldButton dim={G.status !== 'playing'} label="◀" onPress={() => move(-1)} repeat style={[styles.dArm, { left: 6, top: 43 }]} />
           <HoldButton dim={G.status !== 'playing'} label="▶" onPress={() => move(1)} repeat style={[styles.dArm, { right: 6, top: 43 }]} />
+          <HoldButton dim={G.status !== 'playing'} label="▲" onPress={() => rotate(1)} style={[styles.dArm, { left: 43, top: 6 }]} />
           <HoldButton dim={G.status !== 'playing'} label="▼" onPress={softDrop} repeat style={[styles.dArm, { left: 43, bottom: 6 }]} />
         </View>
       </FloatPad>
@@ -3345,13 +3401,13 @@ const styles = StyleSheet.create({
   coach: { fontSize: 13, fontFamily: FONT, letterSpacing: 0.5, height: 18, marginBottom: 2 },
   bar: { width: '90%', height: 6, backgroundColor: 'rgba(0,0,0,0.30)', borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: '#2bff88' },
-  badge: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(20,10,60,0.6)', borderWidth: 3, borderColor: '#ffd23b', alignItems: 'center', justifyContent: 'center' },
+  badge: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#3a1d5c', borderWidth: 2.5, borderColor: '#ffe39a', alignItems: 'center', justifyContent: 'center' },
   badgeLbl: { color: '#ffd23b', fontFamily: FONT, fontSize: 9, lineHeight: 10 },
   badgeNum: { color: '#fff', fontFamily: FONT, fontSize: 21, lineHeight: 23, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
-  stat: { height: 18, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden', justifyContent: 'center' },
+  stat: { height: 18, borderRadius: 9, backgroundColor: 'rgba(25,60,140,0.82)', borderWidth: 2, borderColor: 'rgba(210,230,255,0.9)', overflow: 'hidden', justifyContent: 'center' },
   statFill: { position: 'absolute', left: 0, top: 0, bottom: 0 },
   statTxt: { color: '#fff', fontFamily: FONT, fontSize: 10, textAlign: 'center', paddingHorizontal: 4, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
-  pill: { flexDirection: 'row', alignItems: 'center', height: 26, paddingHorizontal: 8, borderRadius: 14, backgroundColor: 'rgba(20,10,60,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
+  pill: { flexDirection: 'row', alignItems: 'center', height: 26, paddingHorizontal: 8, borderRadius: 14, backgroundColor: 'rgba(75,32,20,0.88)', borderWidth: 2, borderColor: '#e0b25c' },
   pillLbl: { color: 'rgba(255,255,255,0.75)', fontFamily: FONT, fontSize: 9, marginRight: 4 },
   pillIco: { fontSize: 14, marginRight: 4 },
   pillNum: { color: '#fff', fontFamily: FONT, fontSize: 15, textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
@@ -3359,16 +3415,16 @@ const styles = StyleSheet.create({
   hudBar: { position: 'absolute', left: 0, right: 0, height: HUD_H, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, zIndex: 20 },
   hudL: { flexDirection: 'row', alignItems: 'center' },
   hudR: { alignItems: 'flex-end' },
-  dpad: { width: 128, height: 128, borderRadius: 64, backgroundColor: 'rgba(255,255,255,0.10)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.38)' },
-  dArm: { position: 'absolute', flex: 0, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)', borderBottomWidth: 2, borderBottomColor: 'rgba(255,255,255,0.55)' },
+  dpad: { width: 128, height: 128, borderRadius: 64, backgroundColor: 'rgba(205,225,255,0.14)', borderWidth: 2.5, borderColor: 'rgba(225,238,255,0.6)' },
+  dArm: { position: 'absolute', flex: 0, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(78,58,195,0.94)', borderWidth: 2.5, borderColor: '#cdbbff', borderBottomWidth: 2.5, borderBottomColor: '#cdbbff' },
   acts: { width: 156, height: 130 },
-  act: { position: 'absolute', flex: 0, backgroundColor: 'rgba(255,255,255,0.16)', borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.6)', borderBottomWidth: 2.5, borderBottomColor: 'rgba(255,255,255,0.6)' },
-  actDrop: { backgroundColor: 'rgba(255,59,107,0.45)', borderColor: 'rgba(255,208,220,0.9)', borderBottomColor: 'rgba(255,208,220,0.9)' },
+  act: { position: 'absolute', flex: 0, backgroundColor: 'rgba(70,45,160,0.94)', borderWidth: 3, borderColor: '#e8b04a', borderBottomWidth: 3, borderBottomColor: '#e8b04a' },
+  actDrop: { backgroundColor: '#ff3b8f', borderColor: '#f6cf74', borderBottomColor: '#f6cf74', shadowColor: '#ff3bd4', shadowOpacity: 1, shadowRadius: 14, elevation: 14 },
   actTxt: { fontFamily: FONT, fontWeight: 'normal', fontSize: 14, lineHeight: 17, textAlign: 'center', textShadowColor: 'rgba(20,10,60,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 1 },
   railBtn: { width: 36, height: 36, marginBottom: 6, borderRadius: 18, backgroundColor: 'rgba(25,12,70,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.45)', borderBottomWidth: 4, borderBottomColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  nextRail: { width: 42, alignItems: 'center', paddingVertical: 4, marginBottom: 8, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)' },
+  nextRail: { width: 46, alignItems: 'center', paddingVertical: 6, marginBottom: 8, borderRadius: 22, backgroundColor: 'rgba(175,205,255,0.16)', borderWidth: 2, borderColor: 'rgba(225,238,255,0.55)' },
   nextLbl: { color: 'rgba(255,255,255,0.8)', fontFamily: FONT, fontSize: 8, marginBottom: 2 },
-  coachFloat: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#fff', fontFamily: FONT, fontSize: 14, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 2 },
+  coachFloat: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: '#ffe7a8', fontFamily: FONT, fontSize: 22, lineHeight: 27, textShadowColor: '#7a4311', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 5 },
   nextBox: { flexDirection: 'row', alignItems: 'flex-start', padding: 6, borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.32)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.22)' },
   goalRow: { width: '90%', flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   goalTrack: { flex: 1, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.42)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', overflow: 'hidden' },
@@ -3409,7 +3465,7 @@ const styles = StyleSheet.create({
   gripOn: { backgroundColor: 'rgba(255,210,59,0.95)' },
   padEdit: { borderRadius: 18, borderWidth: 2, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.8)', backgroundColor: 'rgba(255,255,255,0.10)' },
   gripTxt: { color: 'rgba(255,255,255,0.85)', fontSize: 12, letterSpacing: 2, fontWeight: '900' },
-  ico: { width: 38, height: 38, marginLeft: 6, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.38)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)', borderBottomWidth: 4, borderBottomColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  ico: { width: 38, height: 38, marginLeft: 6, borderRadius: 19, backgroundColor: 'rgba(95,55,25,0.92)', borderWidth: 2.5, borderColor: '#e8b04a', alignItems: 'center', justifyContent: 'center' },
   icoTxt: { color: '#fff', fontSize: 17 },
   fbtn: { flex: 0, width: 48, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: 'rgba(25,12,70,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.7)' },
   fdrop: { flex: 0, width: 66, height: 48, marginHorizontal: 3, borderRadius: 24, backgroundColor: '#ff3b6b', borderWidth: 2, borderColor: '#ffd0dc', borderBottomColor: '#a3123a' },
