@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated, ScrollView,
-  useWindowDimensions, StatusBar, PanResponder, Share, Platform,
+  useWindowDimensions, StatusBar, PanResponder, Share, Platform, AppState, TextInput,
 } from 'react-native';
 import { Image, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -17,7 +17,8 @@ const FONT = 'Fredoka_700Bold';
 /* ============================== ENGINE ============================== */
 const COLS = 6;
 const ROWS = 12;
-const MAX_LEVEL = 20;
+const MAX_LEVEL = 100; // campaign length: levels 1-20 handcrafted, 21-100 generated (server can override any)
+const ENDLESS_L = 901, DAILY_L = 902, EVENT_L = 903; // reserved ids, never collide with campaign levels
 const MIN_GROUP = 4;
 const COLORS = ['', '#ff3355', '#2ee86b', '#2e9bff', '#ffd21a', '#c64dff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
 const GLYPHS = ['', '●', '▲', '■', '◆', '★'];
@@ -143,7 +144,10 @@ const REALMS = [
   { name: 'FROST PEAKS', bg: '#5aa2f0', sky: ['#a8e0ff', '#5aa2f0', '#4a5fd0'], board: 'rgba(10,25,80,0.45)', border: '#e6f6ff', accent: '#ffffff' },
   { name: 'NEON CITY', bg: '#8a3bff', sky: ['#ff4fd8', '#8a3bff', '#2a1a7a'], board: 'rgba(15,5,50,0.55)', border: '#ff9bec', accent: '#ff9bec' },
 ];
-const realmOf = (L) => Math.min(3, Math.floor((L - 1) / 5));
+// campaign worlds: 1-20 as before, then 21-100 loop through the four realms in blocks of 10
+const secOf = (L) => (L <= 20 ? Math.floor((L - 1) / 5) : 4 + Math.floor((L - 21) / 10));
+const realmOf = (L) => (L <= 20 ? Math.min(3, Math.floor((L - 1) / 5)) : L >= 900 ? 3 : Math.floor((L - 21) / 10) % 4);
+const lvlName = (L) => (L === DAILY_L ? 'D' : L === ENDLESS_L ? '∞' : L === EVENT_L ? '★' : String(L));
 // t: score | chain | rocks | pairs.  g goal, c colors, s speed ms, m move limit,
 // rocks random rocks, rain = a rock falls every N pairs, pre = preset rows (1-5 orbs, 6 rock, 8 cracked)
 const LEVELS = [
@@ -176,8 +180,111 @@ const LEVELS = [
   { t: 'daily', g: 40, c: 5, s: 620, rain: 5, coach: 'DAILY CHAIN: same board for everyone' },
 ];
 
+
+/* ============================== CAMPAIGN 21-100 + REMOTE CONFIG (v23) ============================== */
+const BOSS_NAMES = ['Mossback', 'Tide Titan', 'Frost Warden', 'Neon Queen', 'Gloom Weaver', 'Storm Kraken', 'Ice Colossus', 'Glitch King'];
+const GEN_CACHE = {};
+// Deterministic level designer: the same level number always gives the same level, offline or online.
+function genLevel(n) {
+  if (GEN_CACHE[n]) return GEN_CACHE[n];
+  const r = seeded(n * 7919 + 13);
+  const d = Math.min(1, (n - 20) / 80); // difficulty ramp 0..1 across 21-100
+  const boss = n % 10 === 0;
+  const kinds = ['score', 'chain', 'pairs', 'rocks', 'score', 'pairs'];
+  let t = kinds[(n + Math.floor(r() * 2)) % kinds.length];
+  if (boss) t = 'score';
+  const cfg = { t, c: n < 30 ? 4 : 5, s: Math.round(560 - d * 150 - (boss ? 20 : 0)) };
+  const rockRow = (k) => {
+    const row = Array(6).fill('.');
+    for (let i = 0; i < k; i++) row[Math.floor(r() * 6)] = r() < 0.5 ? '6' : '8';
+    return row.join('');
+  };
+  if (t === 'score') {
+    cfg.g = Math.round((1500 + d * 3000 + (boss ? 1000 : 0)) / 100) * 100;
+    if (boss || r() < 0.35) cfg.m = Math.round(46 - d * 4 + (boss ? 6 : 0));
+    cfg.rocks = 1 + Math.floor(d * 5) + (boss ? 3 : 0);
+    if (!boss && r() < 0.3) {
+      const rows = [];
+      for (let i = 0; i < 2 + Math.floor(r() * 2); i++) {
+        rows.push(Array.from({ length: 6 }, () => (r() < 0.25 ? '.' : String(1 + Math.floor(r() * cfg.c)))).join(''));
+      }
+      cfg.pre = rows;
+    }
+  } else if (t === 'chain') {
+    cfg.g = 4 + Math.floor(d * 2.99);
+  } else if (t === 'pairs') {
+    cfg.g = 30 + Math.floor(d * 18);
+    cfg.rain = d < 0.4 ? 4 : 3;
+    cfg.rocks = Math.floor(d * 5);
+  } else {
+    cfg.pre = [rockRow(2 + Math.floor(d * 2)), rockRow(2 + Math.floor(d * 2))];
+    cfg.rocks = 3 + Math.floor(d * 6);
+  }
+  if (boss) cfg.coach = `BOSS: ${BOSS_NAMES[(n / 10 - 3) % BOSS_NAMES.length]}`;
+  GEN_CACHE[n] = cfg;
+  return cfg;
+}
+// Remote data is untrusted input: every field is clamped or the whole config is dropped.
+const OK_T = ['score', 'chain', 'rocks', 'pairs'];
+function cleanCfg(x) {
+  if (!x || typeof x !== 'object' || !OK_T.includes(x.t)) return null;
+  const num = (v, lo, hi, d) => (typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : d);
+  const cfg = { t: x.t, c: num(x.c, 3, 5, 4), s: num(x.s, 250, 1500, 640) };
+  if (x.t !== 'rocks') cfg.g = num(x.g, 1, 99999999, 500);
+  if (x.m) cfg.m = num(x.m, 1, 99, 30);
+  if (x.rocks) cfg.rocks = num(x.rocks, 0, 16, 0);
+  if (x.rain) cfg.rain = num(x.rain, 1, 12, 4);
+  if (typeof x.coach === 'string') cfg.coach = x.coach.slice(0, 70);
+  if (Array.isArray(x.pre)) {
+    const pre = x.pre.slice(0, 8).filter((row) => typeof row === 'string' && /^[.0-9]{6}$/.test(row));
+    if (pre.length) cfg.pre = pre;
+  }
+  if (Array.isArray(x.seq)) {
+    const seq = x.seq.slice(0, 6).filter((p) => Array.isArray(p) && p.length === 2 && p.every((v) => Number.isInteger(v) && v >= 1 && v <= 9));
+    if (seq.length) cfg.seq = seq;
+  }
+  return cfg;
+}
+const REMOTE = { levels: {}, events: [] };
+function applyRemote(raw) {
+  const levels = {};
+  (Array.isArray(raw && raw.levels) ? raw.levels : []).forEach((row) => {
+    const n = row && Number(row.n);
+    const cfg = n >= 1 && n <= MAX_LEVEL ? cleanCfg(row.cfg) : null;
+    if (cfg) levels[n] = cfg;
+  });
+  const events = [];
+  (Array.isArray(raw && raw.events) ? raw.events : []).forEach((e) => {
+    const cfg = e && cleanCfg(e.cfg);
+    const a = e && Date.parse(e.starts_at);
+    const b = e && Date.parse(e.ends_at);
+    if (!cfg || typeof e.id !== 'string' || !isFinite(a) || !isFinite(b)) return;
+    events.push({ id: e.id.slice(0, 40), title: String(e.title || 'EVENT').slice(0, 40), blurb: String(e.blurb || '').slice(0, 80), s: a, e: b, cfg });
+  });
+  REMOTE.levels = levels;
+  REMOTE.events = events;
+}
+const activeEvent = () => {
+  const now = Date.now();
+  return REMOTE.events.find((e) => now >= e.s && now < e.e) || null;
+};
+const evLeft = (ev) => {
+  const m = Math.max(0, Math.floor((ev.e - Date.now()) / 60000));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${m % 60}m`;
+};
+const cfgOf = (L) => {
+  if (L === DAILY_L) return LEVELS[21]; // daily rules are verified server-side: never remote, never generated
+  if (L === ENDLESS_L) return LEVELS[20];
+  if (L === EVENT_L) {
+    const ev = activeEvent();
+    return ev ? { ...ev.cfg, coach: ev.cfg.coach || ev.title } : LEVELS[0];
+  }
+  return REMOTE.levels[L] || (L <= 20 ? LEVELS[L - 1] : genLevel(L));
+};
+
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v19';
+const VERSION = 'v23';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -202,7 +309,7 @@ const dateSeed = () => Number(dateKey().replace(/-/g, ''));
 
 // ad pacing: one place to tune. Never two interstitials within 2 minutes.
 let lastAdAt = 0;
-const adDue = (L) => (L === 6 || L === 9 || (L >= 12 && L % 2 === 0)) && Date.now() - lastAdAt > 120000;
+const adDue = (L) => L < 900 && (L === 6 || L === 9 || (L >= 12 && L % 2 === 0)) && Date.now() - lastAdAt > 120000;
 
 const CHEST_SHARDS = 1; // daily chest reward: flat on purpose (shards only buy cosmetic skins)
 // free orb skins, earned with shards from daily missions
@@ -764,6 +871,25 @@ async function fetchBoard(day) {
   } catch (e) {
     return null;
   }
+}
+async function loadRemote() {
+  try {
+    const c = await AsyncStorage.getItem('rcfg');
+    if (c) applyRemote(JSON.parse(c));
+  } catch (e) {}
+  if (!ONLINE) return;
+  try {
+    const h = { apikey: SUPABASE_ANON };
+    if (SUPABASE_ANON.startsWith('eyJ')) h.Authorization = 'Bearer ' + SUPABASE_ANON;
+    const [a, b] = await Promise.all([
+      fetchT(`${SUPABASE_URL}/rest/v1/chainorb_levels?select=n,cfg&active=eq.true&order=n.asc&limit=200`, { headers: h }),
+      fetchT(`${SUPABASE_URL}/rest/v1/chainorb_events?select=id,title,blurb,starts_at,ends_at,cfg&active=eq.true&order=starts_at.asc&limit=20`, { headers: h }),
+    ]);
+    if (!a.ok || !b.ok) return;
+    const raw = { levels: await a.json(), events: await b.json() };
+    applyRemote(raw);
+    AsyncStorage.setItem('rcfg', JSON.stringify(raw)).catch(() => {});
+  } catch (e) {}
 }
 const EMO = ['⬜', '🟥', '🟩', '🟦', '🟨', '🟪', '⬛', '💣', '🪨', '🌈'];
 
@@ -1383,11 +1509,11 @@ const HudArt = React.memo(function HudArt({ w, h, goal, fever, feverOn, muted })
           <Path path={svgPath(STAR_D)} color="#ffd23b" />
           <Path path={svgPath(STAR_D)} style="stroke" strokeWidth={0.05} color="#fff3bf" />
         </Group>
-        {/* gear + sound */}
+        {/* pause + sound */}
         <Sphere cx={651} cy={129} R={30} body={['#d9a05a', '#a8672a', '#5e3412']} />
         <Group transform={[{ translateX: 651 }, { translateY: 129 }]}>
-          <Path path={svgPath(GEAR_D)} color="#fff1cf" />
-          <Circle cx={0} cy={0} r={6.5} color="#7a4a1c" />
+          <RoundedRect x={-11} y={-13} width={8} height={26} r={3} color="#fff1cf" />
+          <RoundedRect x={3} y={-13} width={8} height={26} r={3} color="#fff1cf" />
         </Group>
         <Sphere cx={722} cy={129} R={30} body={['#c99a58', '#8f5f28', '#4e2c10']} />
         <Group transform={[{ translateX: 722 }, { translateY: 129 }]}>
@@ -2045,17 +2171,20 @@ function CountUp({ to, style }) {
 
 const MAP_W = 300, NODE = 58, NODE_H = 78, HEAD_H = 40;
 const nodeX = (L) => MAP_W / 2 + Math.sin((L - 1) * 0.95) * 86;
-const nodeY = (L) => 46 + (L - 1) * NODE_H + realmOf(L) * HEAD_H;
-function WorldMap({ unlocked, stars, float, onPlay, onReady }) {
+const nodeY = (L) => 46 + (L - 1) * NODE_H + secOf(L) * HEAD_H;
+const secName = (L) => REALMS[realmOf(L)].name + (L > 20 ? ' ' + ['II', 'III', 'IV', 'V'][Math.min(3, Math.floor((L - 21) / 40))] : '');
+function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
   const H = nodeY(MAX_LEVEL) + NODE_H;
+  const hr = new Date().getHours();
+  const tint = hr >= 20 || hr < 5 ? 'rgba(4,6,40,0.38)' : hr < 7 || hr >= 17 ? 'rgba(255,110,60,0.13)' : null;
   const done = useRef(false); // fresh per mount, so it scrolls once each time the menu opens
   const items = [];
   for (let L = 1; L <= MAX_LEVEL; L++) {
     const x = nodeX(L), y = nodeY(L);
-    if (L === 1 || realmOf(L) !== realmOf(L - 1)) {
+    if (L === 1 || secOf(L) !== secOf(L - 1)) {
       items.push(
         <Text key={`h${L}`} style={{ position: 'absolute', left: 0, right: 0, top: y - 44, textAlign: 'center', color: REALMS[realmOf(L)].accent, fontFamily: FONT, fontSize: 14, letterSpacing: 3, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }}>
-          {REALMS[realmOf(L)].name}
+          {secName(L)}
         </Text>
       );
     }
@@ -2078,7 +2207,26 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady }) {
         {open ? <Text style={{ position: 'absolute', bottom: -16, color: '#ffd23b', fontSize: 11, letterSpacing: 1 }}>{'★'.repeat(stars[L] || 0) + '☆'.repeat(3 - (stars[L] || 0))}</Text> : null}
       </Pressable>
     );
+    if ((crew || []).length && L % 3 === 2 && L <= unlocked && L > unlocked - 12) {
+      const ci = Math.floor(L / 3) % crew.length;
+      items.push(
+        <Animated.Text
+          key={`crew${L}`}
+          pointerEvents="none"
+          style={{ position: 'absolute', left: L % 2 ? x - 34 : x + NODE + 4, top: y + 10, fontSize: 24, transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, L % 2 ? -6 : 6] }) }] }}
+        >
+          {crew[ci]}
+        </Animated.Text>
+      );
+    }
     if (cur) {
+      if (buddy) {
+        items.push(
+          <Animated.Text key="buddy" pointerEvents="none" style={{ position: 'absolute', left: x - 34, top: y + 8, fontSize: 28, transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) }] }}>
+            {buddy}
+          </Animated.Text>
+        );
+      }
       items.push(
         <Animated.View key="mascot" pointerEvents="none" style={{ position: 'absolute', left: x + NODE - 6, top: y - 14, transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -7] }) }] }}>
           <Orb color={(L % 5) + 1} size={30} />
@@ -2095,8 +2243,534 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady }) {
         if (onReady) onReady(e.nativeEvent.layout.y);
       }}
     >
+      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => (
+        <Animated.View
+          key={`ff${k}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute', left: (k * 53 + 20) % (MAP_W - 10), top: ((k * 211) % Math.max(200, H - 20)) + 20,
+            width: 5, height: 5, borderRadius: 3, backgroundColor: hr >= 19 || hr < 6 ? '#fff6a8' : '#ffffff',
+            opacity: float.interpolate({ inputRange: [0, 1], outputRange: [k % 2 ? 0.15 : 0.7, k % 2 ? 0.7 : 0.15] }),
+            transform: [{ translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, k % 2 ? -14 : 10] }) }, { translateX: float.interpolate({ inputRange: [0, 1], outputRange: [0, k % 3 ? 8 : -8] }) }],
+          }}
+        />
+      ))}
+      {tint ? <View pointerEvents="none" style={{ position: 'absolute', left: -40, right: -40, top: 0, bottom: 0, backgroundColor: tint }} /> : null}
       {items}
     </View>
+  );
+}
+
+
+/* ============================== NEXTGEN v21: ORBDEX, RANKS, STORY, SETTINGS ============================== */
+let HAPTICS = true;
+let LITE = false;
+const MENUISH = ['menu', 'shop', 'dex', 'profile', 'settings', 'story', 'race'];
+const RARITY = {
+  c: { name: 'COMMON', col: '#9fd0ff' },
+  r: { name: 'RARE', col: '#7dffb0' },
+  e: { name: 'EPIC', col: '#d58bff' },
+  l: { name: 'LEGEND', col: '#ffd23b' },
+};
+// 24 collectible Orblings, 6 per realm. Cosmetic companions only: never a gameplay advantage.
+const DEX = [
+  { id: 'ekiro', name: 'Ekiro', icon: '🦉', realm: 0, rar: 'c', line: 'Keeps watch while the grove sleeps.' },
+  { id: 'pinko', name: 'Pinko', icon: '🦔', realm: 0, rar: 'c', line: 'Rolls into a ball when chains get big.' },
+  { id: 'nabuu', name: 'Nabuu', icon: '🦋', realm: 0, rar: 'c', line: 'Follows the brightest orb.' },
+  { id: 'wiggo', name: 'Wiggo', icon: '🐛', realm: 0, rar: 'r', line: 'Dreams of becoming a x9 chain.' },
+  { id: 'mushi', name: 'Mushi', icon: '🍄', realm: 0, rar: 'e', line: 'Glows brighter every pop.' },
+  { id: 'kasi', name: 'Kasi', icon: '🦊', realm: 0, rar: 'l', line: 'The fastest fox in Twilight Grove.' },
+  { id: 'ribbo', name: 'Ribbo', icon: '🐸', realm: 1, rar: 'c', line: 'Sings when the lake lights up.' },
+  { id: 'bata', name: 'Bata', icon: '🦆', realm: 1, rar: 'c', line: 'Always first to the water.' },
+  { id: 'kobe', name: 'Kobe', icon: '🐢', realm: 1, rar: 'c', line: 'Slow, steady, never loses a column.' },
+  { id: 'samaki', name: 'Samaki', icon: '🐟', realm: 1, rar: 'r', line: 'Swims upstream through every chain.' },
+  { id: 'flamo', name: 'Flamo', icon: '🦩', realm: 1, rar: 'e', line: 'Balances on one leg through a x6.' },
+  { id: 'sealo', name: 'Sealo', icon: '🦭', realm: 1, rar: 'l', line: 'Claps for every perfect clear.' },
+  { id: 'pengo', name: 'Pengo', icon: '🐧', realm: 2, rar: 'c', line: 'Slides into every combo.' },
+  { id: 'floki', name: 'Floki', icon: '❄️', realm: 2, rar: 'c', line: 'No two flakes pop alike.' },
+  { id: 'elku', name: 'Elku', icon: '🦌', realm: 2, rar: 'c', line: 'Leaps over rock walls.' },
+  { id: 'polo', name: 'Polo', icon: '🐻‍❄️', realm: 2, rar: 'r', line: 'Hibernates between boss fights.' },
+  { id: 'wolfi', name: 'Wolfi', icon: '🐺', realm: 2, rar: 'e', line: 'Howls when fever starts.' },
+  { id: 'snowy', name: 'Snowy', icon: '⛄', realm: 2, rar: 'l', line: 'Never melts, never misses.' },
+  { id: 'bitzo', name: 'Bitzo', icon: '🤖', realm: 3, rar: 'c', line: 'Calculates the perfect drop.' },
+  { id: 'pixl', name: 'Pixl', icon: '👾', realm: 3, rar: 'c', line: 'Lives inside the neon grid.' },
+  { id: 'neona', name: 'Neona', icon: '🦄', realm: 3, rar: 'c', line: 'Leaves rainbow trails.' },
+  { id: 'octa', name: 'Octa', icon: '🐙', realm: 3, rar: 'r', line: 'Eight arms, eight chains.' },
+  { id: 'rexo', name: 'Rexo', icon: '🦖', realm: 3, rar: 'e', line: 'Stomps rocks flat.' },
+  { id: 'draco', name: 'Draco', icon: '🐲', realm: 3, rar: 'l', line: 'Guardian of the last chain.' },
+];
+const dexLv = (n) => Math.min(5, 1 + Math.floor((Math.max(1, n) - 1) / 2));
+const rankLv = (xp) => Math.floor(Math.sqrt(Math.max(0, xp) / 60)) + 1;
+const rankXp = (lv) => 60 * (lv - 1) * (lv - 1);
+const RANKS = ['Sprout', 'Spark', 'Chainer', 'Weaver', 'Tidecaller', 'Frostwalker', 'Neon Sage', 'Orb Master', 'Legend'];
+const rankName = (lv) => RANKS[Math.min(RANKS.length - 1, Math.floor((lv - 1) / 3))];
+const ACH = [
+  { id: 'pop1', t: 'First Pop', d: 'Pop your first orbs', ok: (p) => p.s.pops >= 1, r: { sh: 1 } },
+  { id: 'ch3', t: 'Chain Starter', d: 'Reach a x3 chain', ok: (p) => p.s.bestChain >= 3, r: { sh: 1 } },
+  { id: 'ch5', t: 'Chain Weaver', d: 'Reach a x5 chain', ok: (p) => p.s.bestChain >= 5, r: { eggs: 1 } },
+  { id: 'ch8', t: 'Chain Legend', d: 'Reach a x8 chain', ok: (p) => p.s.bestChain >= 8, r: { eggs: 2, sh: 3 } },
+  { id: 'w10', t: 'Seasoned', d: 'Clear 10 levels', ok: (p) => p.s.wins >= 10, r: { eggs: 1 } },
+  { id: 'w50', t: 'Veteran', d: 'Clear 50 levels', ok: (p) => p.s.wins >= 50, r: { eggs: 2 } },
+  { id: 'pf1', t: 'Spotless', d: 'Perfect clear the board', ok: (p) => p.s.perfects >= 1, r: { eggs: 1 } },
+  { id: 'cl3', t: 'Nerves of Steel', d: 'Make 3 clutch saves', ok: (p) => p.s.clutches >= 3, r: { sh: 2 } },
+  { id: 'fv5', t: 'Feverish', d: 'Trigger Fever 5 times', ok: (p) => p.s.fevers >= 5, r: { sh: 2 } },
+  { id: 'pp1k', t: 'Popper', d: 'Pop 1,000 orbs', ok: (p) => p.s.pops >= 1000, r: { eggs: 1 } },
+  { id: 'pp10k', t: 'Pop Machine', d: 'Pop 10,000 orbs', ok: (p) => p.s.pops >= 10000, r: { eggs: 3 } },
+  { id: 'g100', t: 'Regular', d: 'Play 100 games', ok: (p) => p.s.games >= 100, r: { sh: 3 } },
+  { id: 'st30', t: 'Star Collector', d: 'Earn 30 stars', ok: (p, G) => totalStars(G.stars) >= 30, r: { eggs: 2 } },
+  { id: 'bs1', t: 'Boss Slayer', d: 'Defeat the Lake Spirit', ok: (p, G) => !!G.stars[10], r: { eggs: 2 } },
+  { id: 'sk7', t: 'Devoted', d: 'Reach a 7 day streak', ok: (p, G) => G.streak.n >= 7, r: { eggs: 1, sh: 2 } },
+  { id: 'dx6', t: 'Collector', d: 'Hatch 6 different Orblings', ok: (p, G) => Object.keys(G.dex.own).length >= 6, r: { sh: 3 } },
+  { id: 'dx24', t: 'Orbdex Complete', d: 'Hatch all 24 Orblings', ok: (p, G) => Object.keys(G.dex.own).length >= DEX.length, r: { sh: 20 } },
+  { id: 'rc1', t: 'Ghost Buster', d: 'Beat a ghost in a race', ok: (p) => (p.s.raceWins || 0) >= 1, r: { eggs: 1 } },
+  { id: 'rc10', t: 'Ghost Hunter', d: 'Beat 10 ghosts', ok: (p) => (p.s.raceWins || 0) >= 10, r: { eggs: 2, sh: 3 } },
+  { id: 'rk5', t: 'Rising Star', d: 'Reach rank 5', ok: (p) => rankLv(p.xp) >= 5, r: { eggs: 1 } },
+];
+// scenes that play the first time you reach a level
+const STORY_AT = { 1: 'intro', 6: 'realm2', 10: 'boss10', 11: 'realm3', 16: 'realm4', 20: 'boss20' };
+const STORY = {
+  intro: [
+    ['🦉', 'Elder Ekiro', 'The orbs are waking, little one. Something is making the realms go quiet.'],
+    ['🦉', 'Elder Ekiro', 'Line up four of a color and they sing. Sing a chain, and the whole world hears it.'],
+    ['🦊', 'Kasi', 'Drop fast, think faster. I will be right here.'],
+  ],
+  realm2: [
+    ['🐸', 'Ribbo', 'Welcome to Moonlit Lake! The water has stopped glowing.'],
+    ['🐸', 'Ribbo', 'Pop the stones, wake the lights. The lake remembers every chain.'],
+  ],
+  boss10: [
+    ['🌊', 'Lake Spirit', 'You woke me? Then show me a chain worth remembering.'],
+  ],
+  realm3: [
+    ['🐧', 'Pengo', 'Frost Peaks! The cold makes rocks stubborn, so plan your pops.'],
+    ['🐧', 'Pengo', 'A big chain melts everything. Trust me.'],
+  ],
+  realm4: [
+    ['🤖', 'Bitzo', 'Neon City is flickering. The grid needs one huge chain to come back online.'],
+  ],
+  boss20: [
+    ['👑', 'Neon King', 'Every realm hangs on this board. Make it a legend.'],
+  ],
+};
+
+function HatchReveal({ d, isNew, n }) {
+  const sc = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(sc, { toValue: 1, friction: 4, tension: 120, useNativeDriver: true }).start();
+  }, []);
+  const R = RARITY[d.rar];
+  return (
+    <Animated.View style={{ alignItems: 'center', marginVertical: 8, transform: [{ scale: sc }] }}>
+      <Text style={{ fontSize: 68 }}>{d.icon}</Text>
+      <Text style={[styles.title, { fontSize: 22, textShadowColor: R.col }]}>{d.name}</Text>
+      <Text style={{ color: R.col, fontFamily: FONT, letterSpacing: 2, fontSize: 13 }}>
+        {R.name}{isNew ? '  •  NEW!' : `  •  Lv ${dexLv(n)}`}
+      </Text>
+      <Text style={[styles.hint, { textAlign: 'center', maxWidth: 260 }]}>{d.line}</Text>
+    </Animated.View>
+  );
+}
+
+function OrbdexScreen({ G, onHatch, onPick, onBack }) {
+  const own = G.dex.own;
+  const have = Object.keys(own).length;
+  const last = G.dexShow && G.dex.last ? G.dex.last : null;
+  const lastD = last ? DEX.find((d) => d.id === last.id) : null;
+  return (
+    <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', paddingVertical: 14 }}>
+      <Text style={styles.title}>ORBDEX</Text>
+      <Text style={styles.hint}>{have}/{DEX.length} found  •  🥚 {G.dex.eggs} egg{G.dex.eggs === 1 ? '' : 's'}</Text>
+      {lastD ? <HatchReveal key={last.at} d={lastD} isNew={last.isNew} n={(own[lastD.id] || { n: 1 }).n} /> : null}
+      <Pressable
+        disabled={G.dex.eggs < 1}
+        onPress={onHatch}
+        style={[styles.play, { marginTop: 10, paddingVertical: 12, opacity: G.dex.eggs < 1 ? 0.4 : 1 }]}
+      >
+        <Text style={styles.playTxt}>{G.dex.eggs < 1 ? 'NO EGGS' : '🥚 HATCH EGG'}</Text>
+      </Pressable>
+      <Text style={[styles.hint, { marginTop: 6, fontSize: 11, textAlign: 'center', maxWidth: 300 }]}>
+        Eggs come from new stars, bosses, the daily chest, streaks and achievements. Orblings are cosmetic companions.
+      </Text>
+      {[0, 1, 2, 3].map((r) => (
+        <View key={r} style={{ alignItems: 'center', marginTop: 14 }}>
+          <Text style={{ color: REALMS[r].accent, fontFamily: FONT, fontSize: 13, letterSpacing: 3 }}>{REALMS[r].name}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 6, maxWidth: 340 }}>
+            {DEX.filter((d) => d.realm === r).map((d) => {
+              const o = own[d.id];
+              const R = RARITY[d.rar];
+              const buddy = G.dex.companion === d.id;
+              return (
+                <Pressable
+                  key={d.id}
+                  disabled={!o}
+                  onPress={() => onPick(d.id)}
+                  style={{
+                    width: 52, height: 68, margin: 3, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+                    borderWidth: buddy ? 3 : 2, borderColor: o ? (buddy ? '#2bff88' : R.col) : '#2a2a4a',
+                    backgroundColor: 'rgba(0,0,0,0.35)', opacity: o ? 1 : 0.55,
+                  }}
+                >
+                  <Text style={{ fontSize: 28 }}>{o ? d.icon : '❔'}</Text>
+                  <Text style={{ color: o ? R.col : '#556', fontSize: 9, fontFamily: FONT }}>
+                    {o ? (buddy ? 'BUDDY' : `Lv ${dexLv(o.n)}`) : R.name.slice(0, 3)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ))}
+      <Text style={[styles.hint, { marginTop: 12, fontSize: 11 }]}>Tap an Orbling to make it your buddy on the map.</Text>
+      <Pressable style={{ marginTop: 14 }} onPress={onBack}>
+        <Text style={styles.hint}>BACK</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function ProfileScreen({ G, onBack }) {
+  const p = G.prof;
+  const lv = rankLv(p.xp);
+  const lo = rankXp(lv);
+  const hi = rankXp(lv + 1);
+  const pct = Math.max(0, Math.min(1, (p.xp - lo) / (hi - lo)));
+  const done = ACH.filter((a) => p.ach[a.id]).length;
+  const S = p.s;
+  return (
+    <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', paddingVertical: 14 }}>
+      <Text style={styles.title}>PROFILE</Text>
+      <Text style={[styles.hint, { color: '#ffd23b', fontSize: 18 }]}>RANK {lv}  •  {rankName(lv).toUpperCase()}</Text>
+      <View style={{ width: 260, height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.15)', marginTop: 6, overflow: 'hidden' }}>
+        <View style={{ width: `${Math.round(pct * 100)}%`, height: 12, backgroundColor: '#2bff88' }} />
+      </View>
+      <Text style={[styles.hint, { fontSize: 11 }]}>{p.xp} XP  •  next rank at {hi}</Text>
+      <View style={{ marginTop: 10, alignItems: 'center' }}>
+        <Text style={styles.hint}>Orbs popped {S.pops}  •  Games {S.games}</Text>
+        <Text style={styles.hint}>Levels cleared {S.wins}  •  Best chain x{S.bestChain}</Text>
+        <Text style={styles.hint}>Perfects {S.perfects}  •  Clutches {S.clutches}  •  Fevers {S.fevers}</Text>
+        <Text style={styles.hint}>Ghost races won {S.raceWins || 0}/{S.races || 0}</Text>
+      </View>
+      <Text style={[styles.hint, { marginTop: 14, color: '#fff' }]}>ACHIEVEMENTS {done}/{ACH.length}</Text>
+      {ACH.map((a) => {
+        const got = !!p.ach[a.id];
+        const rw = [a.r.eggs ? `🥚${a.r.eggs}` : '', a.r.sh ? `◆${a.r.sh}` : ''].filter(Boolean).join(' ');
+        return (
+          <View key={a.id} style={{ width: 300, flexDirection: 'row', alignItems: 'center', marginTop: 6, opacity: got ? 1 : 0.5 }}>
+            <Text style={{ fontSize: 22, width: 34 }}>{got ? '🏆' : '🔒'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: got ? '#ffd23b' : '#ddd', fontFamily: FONT, fontSize: 14 }}>{a.t}</Text>
+              <Text style={{ color: '#aab', fontSize: 11 }}>{a.d}</Text>
+            </View>
+            <Text style={{ color: '#9fd0ff', fontSize: 11 }}>{rw}</Text>
+          </View>
+        );
+      })}
+      <Pressable style={{ marginTop: 16 }} onPress={onBack}>
+        <Text style={styles.hint}>BACK</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function SettingsScreen({ onToggleHaptics, onToggleLite, onReplayStory, onBack }) {
+  const row = (label, on, fn) => (
+    <Pressable onPress={fn} style={[styles.modeBtn, { width: 260, marginTop: 10, borderColor: on ? '#2bff88' : '#2a2a4a' }]}>
+      <Text style={styles.modeTxt}>{label}: {on ? 'ON' : 'OFF'}</Text>
+    </Pressable>
+  );
+  return (
+    <>
+      <Text style={styles.title}>SETTINGS</Text>
+      {row('📳 HAPTICS', HAPTICS, onToggleHaptics)}
+      {row('🪶 LITE EFFECTS', LITE, onToggleLite)}
+      <Text style={[styles.hint, { fontSize: 11, textAlign: 'center', maxWidth: 280, marginTop: 6 }]}>
+        Lite effects reduces shake, flash and slow-motion. Good for older phones.
+      </Text>
+      <Pressable onPress={onReplayStory} style={[styles.modeBtn, { width: 260, marginTop: 14 }]}>
+        <Text style={styles.modeTxt}>📖 REPLAY STORY SCENES</Text>
+      </Pressable>
+      <Pressable style={{ marginTop: 18 }} onPress={onBack}>
+        <Text style={styles.hint}>BACK</Text>
+      </Pressable>
+    </>
+  );
+}
+
+function StoryScreen({ story, onNext, onSkip }) {
+  const lines = STORY[story.key] || [];
+  const ln = lines[Math.min(story.i, lines.length - 1)] || ['✨', '', ''];
+  return (
+    <Pressable onPress={onNext} style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 }}>
+      <Text style={{ fontSize: 96 }}>{ln[0]}</Text>
+      <Text style={[styles.title, { fontSize: 22, marginTop: 6 }]}>{ln[1]}</Text>
+      <View style={{ marginTop: 14, padding: 16, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.45)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' }}>
+        <Text style={{ color: '#fff', fontFamily: FONT, fontSize: 20, lineHeight: 28, textAlign: 'center' }}>{ln[2]}</Text>
+      </View>
+      <Text style={[styles.hint, { marginTop: 18 }]}>TAP TO CONTINUE  ({Math.min(story.i + 1, lines.length)}/{lines.length})</Text>
+      <Pressable onPress={onSkip} hitSlop={12} style={{ marginTop: 12 }}>
+        <Text style={styles.hint}>SKIP</Text>
+      </Pressable>
+    </Pressable>
+  );
+}
+
+
+/* ============================== GHOST RACE (v22) ============================== */
+// Headless port of the server's verify-daily engine. Replays a move log and records the score and
+// board after every locked piece, so a ghost can be raced piece-for-piece on the same daily seed.
+const gxSeeded = (a) => () => {
+  a |= 0;
+  a = (a + 0x6d2b79f5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+function simGhost(day, log) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day)) || typeof log !== 'string' || !log.length || log.length > 30000 || !/^[LRcwdskh]+$/.test(log)) return null;
+  const C = 6, R = 12, ROCK_ = 6, BOMB_ = 7, CRACK_ = 8, PRISM_ = 9;
+  const OFFS = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+  const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const GOAL = 40, NCOL = 5, RAIN = 5;
+  const rng = gxSeeded(Number(String(day).replace(/-/g, '')));
+  const rnd = (n) => 1 + Math.floor(rng() * n);
+  const newPair = (n) => { const a = rnd(n); return { a, b: rng() < 0 ? a : rnd(n) }; };
+  const S = { board: Array.from({ length: R }, () => Array(C).fill(0)), score: 0, chain: 0, maxChain: 0, placed: 0, fever: 0, feverPcs: 0, prismNext: false, piece: null, next: null, next2: null, ended: false, won: false };
+  const cellsOf = (p) => [[p.r, p.c, p.a], [p.r + OFFS[p.o][0], p.c + OFFS[p.o][1], p.b]];
+  const valid = (b, p) => cellsOf(p).every(([r, c]) => c >= 0 && c < C && r >= 0 && r < R && b[r][c] === 0);
+  const spawnP = (pair) => ({ r: 1, c: 2, o: 0, a: pair.a, b: pair.b });
+  const tryRot = (b, p, dir) => {
+    const o = (p.o + dir + 4) % 4;
+    const p2 = { ...p, o };
+    if (valid(b, p2)) return p2;
+    const d = OFFS[o];
+    const p3 = { ...p2, r: p.r - d[0], c: p.c - d[1] };
+    return valid(b, p3) ? p3 : null;
+  };
+  const grav = (b) => {
+    let moved = false;
+    for (let c = 0; c < C; c++) {
+      let w = R - 1;
+      for (let r = R - 1; r >= 0; r--) {
+        if (b[r][c]) {
+          if (r !== w) { b[w][c] = b[r][c]; b[r][c] = 0; moved = true; }
+          w--;
+        }
+      }
+    }
+    return moved;
+  };
+  const groupsOf = (b) => {
+    const seen = Array.from({ length: R }, () => Array(C).fill(false));
+    const out = [];
+    for (let r = 0; r < R; r++) {
+      for (let c = 0; c < C; c++) {
+        if (!b[r][c] || b[r][c] >= ROCK_ || seen[r][c]) continue;
+        const col = b[r][c];
+        const stack = [[r, c]];
+        const g = [];
+        seen[r][c] = true;
+        while (stack.length) {
+          const [y, x] = stack.pop();
+          g.push([y, x]);
+          for (const [dy, dx] of DIRS4) {
+            const ny = y + dy, nx = x + dx;
+            if (ny >= 0 && ny < R && nx >= 0 && nx < C && !seen[ny][nx] && b[ny][nx] === col) { seen[ny][nx] = true; stack.push([ny, nx]); }
+          }
+        }
+        if (g.length >= 4) out.push(g);
+      }
+    }
+    return out;
+  };
+  const np = () => {
+    if (S.prismNext) { S.prismNext = false; return { a: PRISM_, b: rnd(NCOL) }; }
+    return newPair(NCOL);
+  };
+  const shiftQ = () => {
+    if (S.prismNext) { S.prismNext = false; S.next = { a: PRISM_, b: rnd(NCOL) }; }
+    else S.next = S.next2;
+    S.next2 = np();
+  };
+  const tl = [{ s: 0, c: 0, b: null }];
+  S.next = np();
+  S.next2 = np();
+  grav(S.board);
+  S.piece = spawnP(S.next);
+  shiftQ();
+  const resolve = () => {
+    S.chain = 0;
+    const wasDanger = S.board.slice(0, 4).some((row) => row.some(Boolean));
+    const feverAtLock = S.feverPcs > 0;
+    while (true) {
+      grav(S.board);
+      const groups = groupsOf(S.board);
+      if (!groups.length) break;
+      S.chain++;
+      const flat = groups.flat();
+      const big = groups.reduce((m, g) => (g.length > m.length ? g : m), []);
+      const hit = new Set(flat.map(([r, c]) => r * C + c));
+      for (const [r, c] of flat) {
+        for (const [dy, dx] of DIRS4) {
+          const y = r + dy, x = c + dx;
+          if (y >= 0 && y < R && x >= 0 && x < C && S.board[y][x] >= ROCK_) hit.add(y * C + x);
+        }
+      }
+      for (const k of [...hit]) {
+        const br = Math.floor(k / C), bc = k % C;
+        if (S.board[br][bc] !== BOMB_) continue;
+        for (let y = br - 1; y <= br + 1; y++) for (let x = bc - 1; x <= bc + 1; x++) {
+          if (y >= 0 && y < R && x >= 0 && x < C && S.board[y][x]) hit.add(y * C + x);
+        }
+      }
+      const cells = [...hit].map((k) => [Math.floor(k / C), k % C]);
+      if (S.chain >= 3) S.prismNext = true;
+      S.score += flat.length * 10 * Math.pow(2, S.chain - 1) * (S.feverPcs > 0 ? 2 : 1);
+      if (!(S.feverPcs > 0)) {
+        S.fever += flat.length * 4;
+        if (S.fever >= 100) { S.fever = 0; S.feverPcs = 3; }
+      }
+      for (const [r, c] of cells) S.board[r][c] = S.board[r][c] === CRACK_ ? ROCK_ : 0;
+      if (big.length >= 6) {
+        const [br, bc] = big.reduce((m, x) => (x[0] > m[0] ? x : m));
+        S.board[br][bc] = BOMB_;
+      }
+    }
+    if (feverAtLock && S.feverPcs > 0) S.feverPcs--;
+    if (S.board.every((row) => row.every((v) => !v))) S.score += 500;
+    else if (wasDanger && !S.board.slice(0, 4).some((row) => row.some(Boolean))) S.score += 200;
+    S.maxChain = Math.max(S.maxChain, S.chain);
+    if (S.placed >= GOAL) { S.ended = true; S.won = true; return; }
+    if (S.placed % RAIN === 0) {
+      const rc = Math.floor(rng() * C);
+      if (!S.board[0][rc]) { S.board[0][rc] = ROCK_; grav(S.board); }
+    }
+    const p = spawnP(S.next);
+    if (!valid(S.board, p)) { S.ended = true; return; }
+    S.piece = p;
+    shiftQ();
+  };
+  const lock = () => {
+    for (const [r, c, col] of cellsOf(S.piece)) S.board[r][c] = col;
+    const pr = cellsOf(S.piece).find((x) => x[2] === PRISM_);
+    if (pr) {
+      const [prR, prC] = pr;
+      let tc = 0;
+      const below = prR + 1 < R ? S.board[prR + 1][prC] : 0;
+      if (below >= 1 && below <= 5) tc = below;
+      else {
+        for (const [dy, dx] of [[0, 1], [0, -1], [-1, 0]]) {
+          const y = prR + dy, x = prC + dx;
+          if (y >= 0 && y < R && x >= 0 && x < C && S.board[y][x] >= 1 && S.board[y][x] <= 5) { tc = S.board[y][x]; break; }
+        }
+      }
+      S.board[prR][prC] = 0;
+      if (tc) {
+        S.score += S.board.flat().filter((v) => v === tc).length * 10;
+        S.board = S.board.map((row) => row.map((v) => (v === tc ? 0 : v)));
+      }
+    }
+    S.piece = null;
+    S.placed++;
+    resolve();
+    tl.push({ s: S.score, c: S.maxChain, b: S.board.flat() });
+  };
+  for (let i = 0; i < log.length; i++) {
+    if (S.ended || !S.piece) break;
+    const t = log[i];
+    const p = S.piece;
+    if (t === 'L' || t === 'R') {
+      const p2 = { ...p, c: p.c + (t === 'R' ? 1 : -1) };
+      if (valid(S.board, p2)) S.piece = p2;
+    } else if (t === 'c' || t === 'w') {
+      const p2 = tryRot(S.board, p, t === 'c' ? 1 : -1);
+      if (p2) S.piece = p2;
+    } else if (t === 'd') {
+      const p2 = { ...p, r: p.r + 1 };
+      if (valid(S.board, p2)) S.piece = p2;
+    } else if (t === 's') {
+      const p2 = { ...p, r: p.r + 1 };
+      if (valid(S.board, p2)) { S.piece = p2; S.score += 1; } else lock();
+    } else if (t === 'k') {
+      const p2 = { ...p, r: p.r + 1 };
+      if (!valid(S.board, p2)) lock();
+    } else if (t === 'h') {
+      let n = 0;
+      while (true) {
+        const p2 = { ...S.piece, r: S.piece.r + 1 };
+        if (!valid(S.board, p2)) break;
+        S.piece = p2;
+        n++;
+      }
+      S.score += n * 2;
+      lock();
+    }
+  }
+  return { tl, ended: S.ended, won: S.won };
+}
+const ghostCode = (g) => `CHAINORB1|${g.day}|${String(g.name || 'Ghost').replace(/[|\n]/g, '').slice(0, 20)}|${g.score}|${g.log}`;
+const parseGhostCode = (t) => {
+  const m = String(t || '').match(/CHAINORB1\|(\d{4}-\d{2}-\d{2})\|([^|\n]{0,24})\|(\d+)\|([LRcwdskh]+)/);
+  return m ? { day: m[1], name: m[2] || 'Ghost', score: Number(m[3]), log: m[4] } : null;
+};
+
+function GhostPanel({ w, name, gScore, you, board, placed, goal }) {
+  const cs = Math.max(8, Math.floor(w / COLS));
+  const diff = you - gScore;
+  return (
+    <View style={{ width: w, alignItems: 'center', marginTop: 10 }}>
+      <Text numberOfLines={1} style={{ color: '#d9c8ff', fontFamily: FONT, fontSize: 12 }}>👻 {name}</Text>
+      <Text style={{ color: '#fff', fontFamily: FONT, fontSize: 15 }}>{gScore}</Text>
+      <Text style={{ color: diff >= 0 ? '#2bff88' : '#ff8a8a', fontFamily: FONT, fontSize: 12 }}>
+        {diff >= 0 ? `YOU +${diff}` : `YOU ${diff}`}
+      </Text>
+      <View style={{ marginTop: 4, padding: 1, borderRadius: 6, backgroundColor: 'rgba(160,120,255,0.18)', borderWidth: 1, borderColor: 'rgba(200,170,255,0.5)' }}>
+        {Array.from({ length: ROWS }, (_, r) => (
+          <View key={r} style={{ flexDirection: 'row' }}>
+            {Array.from({ length: COLS }, (_, c) => {
+              const v = board ? board[r * COLS + c] : 0;
+              return <View key={c} style={{ width: cs, height: cs, borderRadius: cs / 3, backgroundColor: v ? COLORS[v] || '#888' : 'transparent', opacity: 0.85, transform: [{ scale: 0.86 }] }} />;
+            })}
+          </View>
+        ))}
+      </View>
+      <Text style={{ color: '#aab', fontSize: 10, fontFamily: FONT, marginTop: 2 }}>{placed}/{goal}</Text>
+    </View>
+  );
+}
+
+function RaceScreen({ G, onTop, onLast, onShare, onCode, onBack }) {
+  const [txt, setTxt] = useState('');
+  const btn = (label, fn, col, dis) => (
+    <Pressable disabled={dis} onPress={fn} style={[styles.modeBtn, { width: 280, marginTop: 10, borderColor: col, opacity: dis ? 0.45 : 1 }]}>
+      <Text style={styles.modeTxt}>{label}</Text>
+    </Pressable>
+  );
+  return (
+    <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', paddingVertical: 14 }}>
+      <Text style={styles.title}>GHOST RACE</Text>
+      <Text style={[styles.hint, { textAlign: 'center', maxWidth: 300 }]}>
+        Race a recorded run on the same pieces. See its score and board live. Races never touch the daily leaderboard.
+      </Text>
+      {btn('🏆 TODAY\'S #1 RUN', onTop, '#ffd23b', !ONLINE || G.raceBusy)}
+      {btn('🕑 MY LAST DAILY', onLast, '#7dffb0', !G.pb)}
+      {btn('📨 SHARE MY GHOST CODE', onShare, '#9fd0ff', !G.pb)}
+      <TextInput
+        value={txt}
+        onChangeText={setTxt}
+        multiline
+        placeholder="Paste a friend's ghost code here"
+        placeholderTextColor="#778"
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={{ width: 280, minHeight: 70, borderWidth: 2, borderColor: '#8888aa', borderRadius: 12, color: '#fff', padding: 10, marginTop: 14, fontSize: 12 }}
+      />
+      {btn('👻 RACE THIS CODE', () => onCode(txt), '#d58bff', !txt.trim())}
+      {G.raceMsg ? <Text style={[styles.hint, { marginTop: 10, color: '#ffd23b', textAlign: 'center', maxWidth: 280 }]}>{G.raceMsg}</Text> : null}
+      <Text style={[styles.hint, { marginTop: 10, fontSize: 11 }]}>Races won {G.prof.s.raceWins || 0}/{G.prof.s.races || 0}  •  first win over each ghost gives 🥚</Text>
+      <Pressable style={{ marginTop: 16 }} onPress={onBack}>
+        <Text style={styles.hint}>BACK</Text>
+      </Pressable>
+    </ScrollView>
   );
 }
 
@@ -2349,6 +3023,20 @@ function Game() {
     snap: null,
     slowUntil: 0,
     hatched: null,
+    dex: { eggs: 1, own: {}, companion: '', last: null },
+    prof: { xp: 0, s: { pops: 0, games: 0, wins: 0, bestChain: 0, perfects: 0, clutches: 0, fevers: 0 }, ach: {} },
+    seen: {},
+    race: null,
+    raceRes: null,
+    raceMsg: '',
+    raceBusy: false,
+    racePassed: false,
+    pb: null,
+    story: null,
+    back: 'menu',
+    dexShow: false,
+    nxGain: null,
+    rankUp: 0,
     boss: false,
     lockAt: 0,
     gx: 0,
@@ -2538,6 +3226,7 @@ function Game() {
     : `GOAL ${G.goal}`;
 
   const buzz = (n) => {
+    if (!HAPTICS) return;
     try {
       const style =
         n >= 4
@@ -2550,6 +3239,7 @@ function Game() {
   };
 
   const doFlash = (power) => {
+    if (LITE) power = power * 0.4;
     flash.setValue(power);
     Animated.timing(flash, { toValue: 0, duration: 520, useNativeDriver: true }).start();
     svFlash.value = power;
@@ -2564,6 +3254,7 @@ function Game() {
   };
 
   const doShake = (p) => {
+    if (LITE) p = p / 3;
     Animated.sequence([
       Animated.timing(shake, { toValue: p, duration: 40, useNativeDriver: true }),
       Animated.timing(shake, { toValue: -p, duration: 60, useNativeDriver: true }),
@@ -2572,11 +3263,15 @@ function Game() {
     ]).start();
   };
 
-  const start = (L) => {
-    G.day = dateKey();
-    RNG = L === 22 ? seeded(Number(G.day.replace(/-/g, ''))) : Math.random;
+  const startReal = (L) => {
+    if (G.race) {
+      G.raceRes = null;
+      G.racePassed = false;
+    }
+    G.day = G.race ? G.race.day : dateKey();
+    RNG = L === DAILY_L ? seeded(Number(G.day.replace(/-/g, ''))) : Math.random;
     if (!G.replay) touchStreak();
-    const cfg = LEVELS[L - 1];
+    const cfg = cfgOf(L);
     G.level = L;
     if (!G.replay) G.attempts[L] = (G.attempts[L] || 0) + 1;
     G.startedAt = Date.now();
@@ -2594,6 +3289,8 @@ function Game() {
     G.snap = null;
     G.slowUntil = 0;
     G.hatched = null;
+    G.nxGain = null;
+    G.rankUp = 0;
     G.boss = false;
     G.prismNext = false;
     G.fever = 0;
@@ -2632,6 +3329,187 @@ function Game() {
     render();
   };
 
+  const saveNx = () => {
+    AsyncStorage.setItem(
+      'nextgen',
+      JSON.stringify({ dex: G.dex, prof: G.prof, seen: G.seen, set: { haptics: HAPTICS, lite: LITE } })
+    ).catch(() => {});
+  };
+  const popBanner = (txt) => {
+    G.banner = txt;
+    bannerScale.setValue(0);
+    Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
+  };
+  const checkAch = () => {
+    if (G.replay) return;
+    let last = null;
+    ACH.forEach((a) => {
+      if (G.prof.ach[a.id]) return;
+      let ok = false;
+      try { ok = a.ok(G.prof, G); } catch (e) {}
+      if (!ok) return;
+      G.prof.ach[a.id] = Date.now();
+      G.shards += a.r.sh || 0;
+      G.dex.eggs += a.r.eggs || 0;
+      last = a;
+    });
+    if (last) {
+      saveMeta();
+      saveNx();
+      popBanner(`🏆 ${last.t}`);
+      jingle([4, 6, 9], 70);
+    }
+  };
+  const addXp = (n) => {
+    if (G.replay) return;
+    const before = rankLv(G.prof.xp);
+    G.prof.xp += n;
+    const after = rankLv(G.prof.xp);
+    if (after > before) {
+      G.rankUp = after;
+      if (after % 2 === 0) G.dex.eggs += 1;
+    }
+  };
+  const nxWin = (starGain) => {
+    if (G.replay) return;
+    G.prof.s.wins++;
+    let eggs = 0;
+    if (starGain > 0) eggs += 1;
+    if (starGain > 0 && G.boss) eggs += 2;
+    if (G.level === EVENT_L) {
+      const key = `ev:${G.eventId || ''}`;
+      if (!G.seen[key]) {
+        G.seen[key] = 1;
+        eggs += 2;
+        G.shards += 3;
+        saveMeta();
+      }
+    }
+    G.dex.eggs += eggs;
+    const xp = 100 + G.earned * 40 + (G.boss ? 200 : 0);
+    addXp(xp);
+    G.nxGain = { xp, eggs };
+    checkAch();
+    saveNx();
+  };
+  const hatchEgg = () => {
+    if (G.dex.eggs < 1) return;
+    G.dex.eggs--;
+    const maxRealm = G.unlocked > 20 ? 3 : realmOf(G.unlocked);
+    const roll = Math.random();
+    const rar = roll < 0.6 ? 'c' : roll < 0.88 ? 'r' : roll < 0.98 ? 'e' : 'l';
+    let pool = DEX.filter((d) => d.realm <= maxRealm && d.rar === rar);
+    if (!pool.length) pool = DEX.filter((d) => d.realm <= maxRealm);
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const cur = G.dex.own[pick.id] || { n: 0 };
+    G.dex.own[pick.id] = { n: cur.n + 1 };
+    G.dex.last = { id: pick.id, isNew: cur.n === 0, at: Date.now() };
+    G.dexShow = true;
+    if (!G.dex.companion) G.dex.companion = pick.id;
+    jingle(rar === 'l' ? [0, 2, 4, 6, 8, 9] : [4, 6, 9], 80);
+    if (rar !== 'c') sfx('choir');
+    buzz(4);
+    checkAch();
+    saveNx();
+    render();
+  };
+  const goStatus = (st, back) => {
+    G.back = back || 'menu';
+    G.status = st;
+    if (st !== 'dex') G.dexShow = false;
+    render();
+  };
+  const storyNext = () => {
+    const st = G.story;
+    if (!st) return;
+    const n = (STORY[st.key] || []).length;
+    if (st.i + 1 >= n) return storyDone();
+    st.i++;
+    render();
+  };
+  const storyDone = () => {
+    const L = G.story ? G.story.L : 1;
+    G.story = null;
+    startReal(L);
+  };
+  const start = (L) => {
+    if (G.race && MENUISH.includes(G.status)) G.race = null;
+    if (!G.replay) G.prof.s.games++;
+    const key = STORY_AT[L];
+    if (key && STORY[key] && !G.seen[key] && !G.replay) {
+      G.seen[key] = 1;
+      saveNx();
+      G.level = L;
+      G.story = { key, i: 0, L };
+      G.status = 'story';
+      render();
+      return;
+    }
+    startReal(L);
+  };
+
+  const startRace = (g) => {
+    const sim = simGhost(g.day, g.log);
+    if (!sim || sim.tl.length < 3) {
+      G.raceMsg = 'That ghost is not valid.';
+      render();
+      return;
+    }
+    G.race = { day: g.day, name: g.name || 'Ghost', log: g.log, tl: sim.tl, score: sim.tl[sim.tl.length - 1].s };
+    G.raceRes = null;
+    G.raceMsg = '';
+    G.racePassed = false;
+    G.replay = null;
+    startReal(DAILY_L);
+  };
+  const startEvent = () => {
+    const ev = activeEvent();
+    if (!ev) return;
+    G.eventId = ev.id;
+    start(EVENT_L);
+  };
+  const raceTop = async () => {
+    if (G.raceBusy) return;
+    G.raceBusy = true;
+    G.raceMsg = 'Fetching the champion…';
+    render();
+    const top = await fetchTopRun(dateKey());
+    G.raceBusy = false;
+    if (!top) {
+      G.raceMsg = 'No top run yet today (or you are offline).';
+      render();
+      return;
+    }
+    startRace({ day: dateKey(), name: top.name, log: top.log });
+  };
+  const raceFinish = () => {
+    const tl = G.race.tl;
+    const gFinal = tl[tl.length - 1].s;
+    const won = G.score > gFinal;
+    G.raceRes = { won, you: G.score, ghost: gFinal, egg: false };
+    G.prof.s.races = (G.prof.s.races || 0) + 1;
+    if (won) {
+      G.prof.s.raceWins = (G.prof.s.raceWins || 0) + 1;
+      const key = `race:${G.race.day}:${G.race.score}:${G.race.name}`;
+      if (!G.seen[key]) {
+        G.seen[key] = 1;
+        G.dex.eggs += 1;
+        G.raceRes.egg = true;
+      }
+      addXp(150);
+    } else {
+      addXp(40);
+    }
+    checkAch();
+    saveNx();
+  };
+  const raceShare = () => {
+    if (!G.pb) return;
+    Share.share({
+      message: `👻 Beat my ChainOrb ghost! ${G.pb.score} pts\n${ghostCode(G.pb)}\nPaste it in ChainOrb > GHOST RACE`,
+    }).catch(() => {});
+  };
+
   const endReplay = () => {
     G.replay = null;
     G.rp = false;
@@ -2659,7 +3537,7 @@ function Game() {
   };
 
   const logEvent = (result) => {
-    if (!ONLINE) return;
+    if (!ONLINE || G.race) return;
     queueEvent({
       pid: PID,
       level: G.level,
@@ -2675,6 +3553,14 @@ function Game() {
     });
   };
   const saveDaily = () => {
+    if (G.race) {
+      raceFinish();
+      return;
+    }
+    if (G.log) {
+      G.pb = { day: G.day, name: NICK, score: G.score, log: G.log };
+      AsyncStorage.setItem('pbghost', JSON.stringify(G.pb)).catch(() => {});
+    }
     G.daily = { d: G.day, s: G.score, c: G.maxChain };
     AsyncStorage.setItem('daily', JSON.stringify(G.daily)).catch(() => {});
     if (ONLINE) {
@@ -2742,7 +3628,7 @@ function Game() {
     if (st.last === t) return;
     st.n = st.last === dateKey(new Date(Date.now() - 86400000)) ? st.n + 1 : 1;
     st.last = t;
-    if (st.n === 3 || st.n === 7 || st.n % 14 === 0) G.shards += 2;
+    if (st.n === 3 || st.n === 7 || st.n % 14 === 0) { G.shards += 2; G.dex.eggs += 1; }
     saveMeta();
   };
   const track = (k, v) => {
@@ -2830,7 +3716,7 @@ function Game() {
     }
     const token = Date.now();
     G.replay = { token, name: top.name, score: top.score };
-    start(22);
+    start(DAILY_L);
     const live = () => alive.current && G.replay && G.replay.token === token;
     const wait = async () => {
       while (live() && (G.status === 'resolving' || G.status === 'paused')) await sleep(40);
@@ -2859,6 +3745,7 @@ function Game() {
   };
 
   const nextAction = () => {
+    if (G.race) return startRace(G.race);
     if (G.t === 'daily') return shareDaily();
     const nxt = G.status === 'won' && G.level < MAX_LEVEL ? G.level + 1 : G.level;
     if (G.status === 'won' && adDue(G.level)) showAd(() => start(nxt));
@@ -2871,6 +3758,8 @@ function Game() {
     logEvent('win');
     if (G.t === 'daily') {
       saveDaily();
+      if (!G.race) addXp(120);
+      saveNx();
       G.status = 'over';
       G.piece = null;
       jingle([0, 2, 4, 6, 9]);
@@ -2890,7 +3779,7 @@ function Game() {
     G.earned =
       1 + (G.maxChain >= 3 ? 1 : 0) + (G.placed <= 10 + G.level * 2 ? 1 : 0);
     const before = totalStars(G.stars);
-    if (G.earned > (G.stars[G.level] || 0)) {
+    if (G.level < 900 && G.earned > (G.stars[G.level] || 0)) {
       G.stars[G.level] = G.earned;
       AsyncStorage.setItem('stars', JSON.stringify(G.stars)).catch(() => {});
     }
@@ -2899,6 +3788,7 @@ function Game() {
     track('levels', 1);
     track('stars', after - before);
     G.boss = G.level % 10 === 0;
+    nxWin(after - before);
     if (G.boss) {
       doShake(14);
       jingle([0, 2, 4, 6, 8, 9, 8, 9], 80);
@@ -2979,6 +3869,11 @@ function Game() {
       if (G.chain >= 3) G.prismNext = true;
       track('pops', flat.length);
       track('chain', G.chain);
+      if (!G.replay) {
+        G.prof.s.pops += flat.length;
+        G.prof.s.bestChain = Math.max(G.prof.s.bestChain, G.chain);
+        addXp(flat.length + G.chain * 3);
+      }
       if (G.chain >= 2) setTimeout(() => buzz(G.chain), 90);
       // hit-stop: the pop frame freezes for 60 ms on a pop of 6+
       if (big.length >= 6) await sleep(60);
@@ -2993,7 +3888,7 @@ function Game() {
       }
       if (G.chain >= 4) doPunch();
       // slow-mo: the cascade ripples out slower from chain 3 up
-      await sleep(G.chain >= 3 ? 520 : 260);
+      await sleep(G.chain >= 3 && !LITE ? 520 : 260);
       const pts = flat.length * 10 * Math.pow(2, G.chain - 1) * (G.feverPcs > 0 ? 2 : 1);
       G.score += pts;
       const centR = flat.reduce((a,x)=>a+x[0],0)/flat.length;
@@ -3008,6 +3903,7 @@ function Game() {
       bannerScale.setValue(0);
       Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
           track('fever', 1);
+          if (!G.replay) G.prof.s.fevers++;
           jingle([0, 2, 4, 6, 8, 9], 60);
           doShake(12);
         }
@@ -3031,6 +3927,7 @@ function Game() {
     if (G.board.every((row) => row.every((v) => !v))) {
       G.score += 500;
       G.banner = 'PERFECT!';
+      if (!G.replay) { G.prof.s.perfects++; addXp(150); }
       bannerScale.setValue(0);
       Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
       jingle([0, 2, 4, 6, 8, 9], 70);
@@ -3039,12 +3936,23 @@ function Game() {
     } else if (wasDanger && !G.board.slice(0, 4).some((row) => row.some(Boolean))) {
       G.score += 200;
       G.banner = 'CLUTCH!';
+      if (!G.replay) { G.prof.s.clutches++; addXp(60); }
       bannerScale.setValue(0);
       Animated.spring(bannerScale, { toValue: 1, friction: 4, tension: 200, useNativeDriver: true }).start();
       jingle([4, 6, 9], 80);
       doShake(10);
     }
     G.maxChain = Math.max(G.maxChain, G.chain);
+    if (G.race && !G.racePassed) {
+      const ge = G.race.tl[Math.min(G.placed, G.race.tl.length - 1)];
+      if (G.score > ge.s) {
+        G.racePassed = true;
+        popBanner('👻 AHEAD!');
+        jingle([4, 6, 9], 70);
+      }
+    }
+    checkAch();
+    saveNx();
     setTimeout(() => {
       G.banner = '';
       render();
@@ -3239,6 +4147,13 @@ function Game() {
     render();
   };
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active') pause();
+    });
+    return () => sub.remove();
+  }, []);
+
   const usePower = (id) => {
     if (G.t === 'daily' || G.status !== 'playing' || !G.piece || G.used[id]) return;
     const isRock = (v) => v === ROCK || v === CRACK;
@@ -3324,6 +4239,33 @@ function Game() {
         }
       })
       .catch(() => {});
+    loadRemote().then(() => render());
+    AsyncStorage.getItem('pbghost')
+      .then((v) => {
+        if (v) {
+          G.pb = JSON.parse(v);
+          render();
+        }
+      })
+      .catch(() => {});
+    AsyncStorage.getItem('nextgen')
+      .then((v) => {
+        if (!v) return;
+        const j = JSON.parse(v);
+        if (j.dex) G.dex = Object.assign({ eggs: 0, own: {}, companion: '', last: null }, j.dex);
+        if (j.prof) {
+          G.prof = {
+            xp: j.prof.xp || 0,
+            s: Object.assign({ pops: 0, games: 0, wins: 0, bestChain: 0, perfects: 0, clutches: 0, fevers: 0 }, j.prof.s || {}),
+            ach: j.prof.ach || {},
+          };
+        }
+        G.seen = j.seen || {};
+        HAPTICS = !(j.set && j.set.haptics === false);
+        LITE = !!(j.set && j.set.lite);
+        render();
+      })
+      .catch(() => {});
     AsyncStorage.getItem('muted')
       .then((v) => {
         MUTED = v === '1';
@@ -3394,9 +4336,10 @@ function Game() {
   /* ---------- draw ---------- */
   const hs = width / 768; // mockup scale
   const hudH = Math.round(hs * 168);
+  const RAIL = Math.round(106 * hs);
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - 8) / COLS), Math.floor((height - STATUS_H - hudH - BOARD_BOTTOM - 8) / ROWS))
+    Math.min(Math.floor((width - RAIL - 12) / COLS), Math.floor((height - STATUS_H - hudH - BOARD_BOTTOM - 8) / ROWS))
   );
   const boardTop = height - BOARD_BOTTOM - (cell * ROWS + 8);
 
@@ -3404,7 +4347,7 @@ function Game() {
   const danger = G.board.slice(0, 4).some((row) => row.some(Boolean));
   const display = G.board.map((row) => row.slice());
 
-  const realm = realmOf(G.status === 'menu' ? G.unlocked : G.level);
+  const realm = realmOf(['menu', 'dex', 'profile', 'settings', 'race'].includes(G.status) ? G.unlocked : G.level);
   useEffect(() => {
     setMusic(realm);
     setInstrument(realm);
@@ -3461,6 +4404,9 @@ function Game() {
   const ghost = []; // legacy View renderer only; v19 ghost lives in PieceLayer
   if (G.piece) G.pvLast = { a: G.piece.a, b: G.piece.b };
   const pvPair = G.piece || G.slam ? G.pvLast : null;
+  const crew = Object.keys(G.dex.own).map((id) => DEX.find((d) => d.id === id)).filter(Boolean).map((d) => d.icon);
+  const buddyD = DEX.find((d) => d.id === G.dex.companion);
+  const buddy = buddyD ? buddyD.icon : '';
 
   return (
     <View style={[styles.root, { backgroundColor: T.bg }]}>
@@ -3487,17 +4433,18 @@ function Game() {
       <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: DIM }]} />
       <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: BOARD_BACK }]} />
 
-      {G.status !== 'menu' && !!G.coach && (
-        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: boardTop + cell * 1.7, alignItems: 'center' }}>
-          <View style={{ width: width * 0.86, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}>
-            <Sparkles w={width * 0.86} h={Math.round(width * 0.066) * 3.4} tw={svFloat} />
-            <Text style={[styles.coachFloat2, { fontSize: Math.round(width * 0.066), lineHeight: Math.round(width * 0.078), maxWidth: width * 0.78 }]}>{G.coach}</Text>
+      {!MENUISH.includes(G.status) && !!G.coach && !(G.placed > 0) && (
+        <View pointerEvents="none" style={{ position: 'absolute', left: Math.round(150 * hs), right: 0, top: boardTop + cell * 1.7, alignItems: 'center' }}>
+          <View style={{ width: width * 0.68, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}>
+            <Sparkles w={width * 0.68} h={Math.round(width * 0.055) * 3.4} tw={svFloat} />
+            <Text style={[styles.coachFloat2, { fontSize: Math.round(width * 0.055), lineHeight: Math.round(width * 0.066), maxWidth: width * 0.64 }]}>{G.coach}</Text>
           </View>
         </View>
       )}
 
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <View style={{ position: 'absolute', left: Math.round(40 * hs), top: 6, width: Math.round(100 * hs), alignItems: 'center', zIndex: 5 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', width, paddingLeft: RAIL }}>
+        {!MENUISH.includes(G.status) && (
+        <View style={{ position: 'absolute', left: Math.round(2 * hs), top: 6, width: Math.round(100 * hs), alignItems: 'center', zIndex: 5 }}>
           <View style={{ width: Math.round(100 * hs), height: Math.round(312 * hs), marginBottom: 4 }}>
             <NextArt s={hs} orbs={[G.next.b, G.next.a, G.next2.b]} skin={SKIN} />
             <Text pointerEvents="none" style={[styles.nextLbl2, { top: Math.round(34 * hs), fontSize: Math.round(22 * hs) }]}>NEXT</Text>
@@ -3532,7 +4479,12 @@ function Game() {
               </Pressable>
             );
           })}
+          {G.race ? (() => {
+            const ge = G.race.tl[Math.min(G.placed, G.race.tl.length - 1)];
+            return <GhostPanel w={Math.round(94 * hs)} name={G.race.name} gScore={ge.s} you={G.score} board={ge.b} placed={G.placed} goal={40} />;
+          })() : null}
         </View>
+        )}
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
         <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: 'transparent', borderColor: G.feverPcs > 0 ? '#ffd23b' : 'transparent' }]}>
           {USE_SKIA && (
@@ -3806,6 +4758,9 @@ function Game() {
               >
                 <Text style={styles.hint}>RESTART LEVEL</Text>
               </Pressable>
+              <Pressable style={{ marginTop: 18 }} onPress={() => goStatus('settings', 'paused')}>
+                <Text style={styles.hint}>SETTINGS</Text>
+              </Pressable>
               <Pressable
                 style={{ marginTop: 18 }}
                 onPress={() => {
@@ -3861,6 +4816,8 @@ function Game() {
                 unlocked={G.unlocked}
                 stars={G.stars}
                 float={float}
+                crew={crew}
+                buddy={buddy}
                 onPlay={start}
                 onReady={(mapTop) => {
                   // centre the current level node in the viewport (positions are exact: nodeY is fixed-pixel)
@@ -3868,9 +4825,21 @@ function Game() {
                   if (menuScroll.current) menuScroll.current.scrollTo({ y: Math.max(0, y), animated: false });
                 }}
               />
+              {(() => {
+                const ev = activeEvent();
+                if (!ev) return null;
+                return (
+                  <Pressable onPress={startEvent} style={[styles.modeBtn, { borderColor: '#ff5ea8', marginTop: 8, width: 290 }]}>
+                    <Text style={styles.modeTxt}>🎉 {ev.title}</Text>
+                    <Text style={{ color: '#ffd1e6', fontSize: 10, textAlign: 'center' }}>
+                      {ev.blurb ? `${ev.blurb} • ` : ''}ends in {evLeft(ev)}{G.seen[`ev:${ev.id}`] ? ' • cleared ✓' : ' • first clear: 🥚🥚 +3◆'}
+                    </Text>
+                  </Pressable>
+                );
+              })()}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
                 <Pressable
-                  onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(22))}
+                  onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(DAILY_L))}
                   style={[styles.modeBtn, { borderColor: '#ffd23b' }]}
                 >
                   <Text style={styles.modeTxt}>
@@ -3882,6 +4851,8 @@ function Game() {
                     if (G.chestDay === dateKey()) return;
                     G.chestDay = dateKey();
                     G.shards += CHEST_SHARDS;
+                    G.dex.eggs += 1;
+                    saveNx();
                     G.chestFlash = Date.now();
                     setTimeout(() => render(), 1700);
                     saveMeta();
@@ -3903,8 +4874,20 @@ function Game() {
                 >
                   <Text style={styles.modeTxt}>🎯 MISSIONS</Text>
                 </Pressable>
+                <Pressable onPress={() => goStatus('race')} style={[styles.modeBtn, { borderColor: '#d58bff' }]}>
+                  <Text style={styles.modeTxt}>👻 GHOST RACE</Text>
+                </Pressable>
+                <Pressable onPress={() => goStatus('dex')} style={[styles.modeBtn, { borderColor: '#7dffb0' }]}>
+                  <Text style={styles.modeTxt}>{`🥚 ORBDEX${G.dex.eggs ? ` (${G.dex.eggs})` : ''}`}</Text>
+                </Pressable>
+                <Pressable onPress={() => goStatus('profile')} style={[styles.modeBtn, { borderColor: '#9fd0ff' }]}>
+                  <Text style={styles.modeTxt}>{`🏆 RANK ${rankLv(G.prof.xp)}`}</Text>
+                </Pressable>
+                <Pressable onPress={() => goStatus('settings', 'menu')} style={[styles.modeBtn, { borderColor: '#8888aa' }]}>
+                  <Text style={styles.modeTxt}>⚙ SETTINGS</Text>
+                </Pressable>
                 {G.stars[20] ? (
-                  <Pressable onPress={() => start(21)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
+                  <Pressable onPress={() => start(ENDLESS_L)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
                     <Text style={styles.modeTxt}>∞ ENDLESS</Text>
                   </Pressable>
                 ) : null}
@@ -3923,6 +4906,37 @@ function Game() {
                 </Pressable>
               ) : null}
             </ScrollView>
+          ) : G.status === 'race' ? (
+            <RaceScreen
+              G={G}
+              onTop={raceTop}
+              onLast={() => G.pb && startRace(G.pb)}
+              onShare={raceShare}
+              onCode={(t) => {
+                const g = parseGhostCode(t);
+                if (!g) { G.raceMsg = 'No ghost code found in that text.'; render(); return; }
+                startRace(g);
+              }}
+              onBack={() => { G.raceMsg = ''; goStatus('menu'); }}
+            />
+          ) : G.status === 'dex' ? (
+            <OrbdexScreen
+              G={G}
+              onHatch={hatchEgg}
+              onPick={(id) => { G.dex.companion = id; saveNx(); render(); }}
+              onBack={() => goStatus('menu')}
+            />
+          ) : G.status === 'profile' ? (
+            <ProfileScreen G={G} onBack={() => goStatus('menu')} />
+          ) : G.status === 'settings' ? (
+            <SettingsScreen
+              onToggleHaptics={() => { HAPTICS = !HAPTICS; saveNx(); render(); }}
+              onToggleLite={() => { LITE = !LITE; saveNx(); render(); }}
+              onReplayStory={() => { G.seen = {}; saveNx(); render(); }}
+              onBack={() => goStatus(G.back || 'menu')}
+            />
+          ) : G.status === 'story' && G.story ? (
+            <StoryScreen story={G.story} onNext={storyNext} onSkip={storyDone} />
           ) : G.status === 'shop' ? (
             <>
               <Text style={styles.title}>MISSIONS</Text>
@@ -3970,9 +4984,11 @@ function Game() {
             <>
               <Text style={styles.title}>
                 {G.status === 'won'
-                  ? `LEVEL ${G.level} CLEAR`
+                  ? `${G.level === EVENT_L ? 'EVENT' : 'LEVEL ' + G.level} CLEAR`
                   : G.moves && G.placed >= G.moves
                   ? 'OUT OF MOVES'
+                  : G.race && G.raceRes
+                  ? (G.raceRes.won ? 'GHOST BEATEN!' : 'GHOST WINS')
                   : G.t === 'daily'
                   ? 'DAILY CHAIN'
                   : 'GAME OVER'}
@@ -3993,6 +5009,12 @@ function Game() {
               {G.status === 'won' && G.boss && (
                 <Text style={[styles.hatch, { color: '#ffd23b' }]}>BOSS DEFEATED!</Text>
               )}
+              {G.status === 'won' && G.nxGain && (
+                <Text style={[styles.hatch, { color: '#9fd0ff' }]}>
+                  +{G.nxGain.xp} XP{G.nxGain.eggs ? `  •  🥚 +${G.nxGain.eggs} EGG` : ''}
+                  {G.rankUp ? `\nRANK UP: ${rankName(G.rankUp)}` : ''}
+                </Text>
+              )}
               {G.status === 'won' && G.hatched && (
                 <Text style={styles.hatch}>
                   {G.hatched.icon} NEW ORBLING{'\n'}
@@ -4007,15 +5029,20 @@ function Game() {
                   : `${Math.min(99, Math.round(progress() * 100))}% there`}
                 {'  •  '}best chain x{G.maxChain}
               </Text>
+              {G.race && G.raceRes && (
+                <Text style={[styles.hatch, { color: G.raceRes.won ? '#2bff88' : '#ff8a8a' }]}>
+                  👻 {G.race.name} {G.raceRes.ghost}  vs  YOU {G.raceRes.you}{G.raceRes.egg ? '\n🥚 +1 EGG' : ''}
+                </Text>
+              )}
               <Pressable
                 style={styles.play}
                 onPress={nextAction}
               >
                 <Text style={styles.playTxt}>
-                  {G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
+                  {G.race ? 'REMATCH' : G.t === 'daily' ? 'SHARE' : G.status === 'won' && G.level < MAX_LEVEL ? 'NEXT LEVEL' : 'RETRY'}
                 </Text>
               </Pressable>
-              {G.t === 'daily' && ONLINE && (
+              {G.t === 'daily' && !G.race && ONLINE && (
                 <View style={{ marginTop: 6, alignItems: 'center' }}>
                   <Text style={styles.small}>TODAY'S TOP</Text>
                   {G.lb === null ? (
@@ -4031,7 +5058,7 @@ function Game() {
                   )}
                 </View>
               )}
-              {G.t === 'daily' && ONLINE && G.lb && G.lb.length > 0 && (
+              {G.t === 'daily' && !G.race && ONLINE && G.lb && G.lb.length > 0 && (
                 <Pressable style={styles.adBtn} onPress={watchTop}>
                   <Text style={styles.adBtnTxt}>▶ WATCH THE #1 RUN</Text>
                 </Pressable>
@@ -4056,6 +5083,11 @@ function Game() {
                   <Text style={styles.adBtnTxt}>▶ WATCH AD: +1 ★</Text>
                 </Pressable>
               )}
+              {G.race && (
+                <Pressable style={{ marginBottom: 10 }} onPress={() => goStatus('race')}>
+                  <Text style={styles.hint}>GHOST MENU</Text>
+                </Pressable>
+              )}
               <Pressable onPress={() => { G.status = 'menu'; render(); }}>
                 <Text style={styles.hint}>LEVELS</Text>
               </Pressable>
@@ -4064,14 +5096,14 @@ function Game() {
         </View>
       )}
 
-      {G.status !== 'menu' && G.status !== 'shop' && (() => {
+      {!MENUISH.includes(G.status) && (() => {
         const at = (cx, cy, w, h) => ({ position: 'absolute', left: (cx - w / 2) * hs, top: (cy - h / 2) * hs, width: w * hs, height: h * hs, alignItems: 'center', justifyContent: 'center' });
         const feverLbl = G.moves ? `${Math.max(0, G.moves - G.placed)} MOVES` : G.feverPcs > 0 ? 'FEVER!' : 'FEVER';
         return (
           <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: STATUS_H - 2, height: hudH, zIndex: 20 }}>
             <HudArt w={width} h={hudH} goal={progress()} fever={G.fever / 100} feverOn={G.feverPcs > 0} muted={MUTED} />
             <View pointerEvents="none" style={at(70, 64, 70, 28)}><Text style={[styles.hudTxt, { color: '#ffd36b', fontSize: 23 * hs }]}>LV</Text></View>
-            <View pointerEvents="none" style={at(70, 102, 80, 60)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { fontSize: 56 * hs }]}>{G.level}</Text></View>
+            <View pointerEvents="none" style={at(70, 102, 80, 60)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { fontSize: 56 * hs }]}>{lvlName(G.level)}</Text></View>
             <View pointerEvents="none" style={at(236, 68, 130, 36)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { color: '#fff3d0', fontSize: 27 * hs }]}>{goalText()}</Text></View>
             <View pointerEvents="none" style={at(236, 128, 130, 36)}><Text adjustsFontSizeToFit numberOfLines={1} style={[styles.hudTxt, { color: '#ffffff', fontSize: 27 * hs, textShadowColor: 'rgba(160,70,0,0.95)', textShadowRadius: 4 }]}>{feverLbl}</Text></View>
             <View pointerEvents="none" style={at(684, 66, 138, 40)}>
