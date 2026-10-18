@@ -2171,10 +2171,13 @@ function CountUp({ to, style }) {
 
 const MAP_W = 300, NODE = 58, NODE_H = 78, HEAD_H = 40;
 const nodeX = (L) => MAP_W / 2 + Math.sin((L - 1) * 0.95) * 86;
-const nodeY = (L) => 46 + (L - 1) * NODE_H + secOf(L) * HEAD_H;
+// FLIPPED_MAP
+const nodeTop = (L) => 46 + (L - 1) * NODE_H + secOf(L) * HEAD_H;
+const mapH = () => nodeTop(MAX_LEVEL) + NODE_H + 40;
+const nodeY = (L) => nodeTop(MAX_LEVEL) - nodeTop(L) + 46; // level 1 at the bottom, MAX at the top
 const secName = (L) => REALMS[realmOf(L)].name + (L > 20 ? ' ' + ['II', 'III', 'IV', 'V'][Math.min(3, Math.floor((L - 21) / 40))] : '');
 function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
-  const H = nodeY(MAX_LEVEL) + NODE_H;
+  const H = mapH();
   const hr = new Date().getHours();
   const tint = hr >= 20 || hr < 5 ? 'rgba(4,6,40,0.38)' : hr < 7 || hr >= 17 ? 'rgba(255,110,60,0.13)' : null;
   const done = useRef(false); // fresh per mount, so it scrolls once each time the menu opens
@@ -2183,7 +2186,7 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
     const x = nodeX(L), y = nodeY(L);
     if (L === 1 || secOf(L) !== secOf(L - 1)) {
       items.push(
-        <Text key={`h${L}`} style={{ position: 'absolute', left: 0, right: 0, top: y - 44, textAlign: 'center', color: REALMS[realmOf(L)].accent, fontFamily: FONT, fontSize: 14, letterSpacing: 3, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }}>
+        <Text key={`h${L}`} style={{ position: 'absolute', left: 0, right: 0, top: y + NODE + 22, textAlign: 'center', color: REALMS[realmOf(L)].accent, fontFamily: FONT, fontSize: 14, letterSpacing: 3, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }}>
           {secName(L)}
         </Text>
       );
@@ -5004,7 +5007,8 @@ function Game() {
               </Pressable>
             </>
           ) : G.status === 'menu' ? (
-            <ScrollView ref={menuScroll} onLayout={(e) => { menuViewH.current = e.nativeEvent.layout.height; }} style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
+            <View style={{ flex: 1, width: '100%' }}>
+<ScrollView ref={menuScroll} onLayout={(e) => { menuViewH.current = e.nativeEvent.layout.height; }} style={{ flex: 1, width: '100%' }} contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', flexGrow: 1, paddingVertical: 12 }}>
               {[1, 2, 3, 4, 5].map((k) => (
                 <Animated.View
                   key={k}
@@ -5056,11 +5060,26 @@ function Game() {
                   if (menuScroll.current) menuScroll.current.scrollTo({ y: Math.max(0, y), animated: false });
                 }}
               />
+              {G.lastErr ? (
+                <Pressable
+                  onPress={() => {
+                    G.lastErr = '';
+                    AsyncStorage.removeItem('lastError').catch(() => {});
+                    render();
+                  }}
+                >
+                  <Text numberOfLines={5} style={{ color: '#ff3b6b', fontSize: 9, width: 280, marginTop: 6 }}>
+                    LAST ERROR (tap to clear): {G.lastErr}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </ScrollView>
+            <View style={styles.menuFooter}>
               {(() => {
                 const ev = activeEvent();
                 if (!ev) return null;
                 return (
-                  <Pressable onPress={startEvent} style={[styles.modeBtn, { borderColor: '#ff5ea8', marginTop: 8, width: 290 }]}>
+                  <Pressable onPress={startEvent} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#ff5ea8', marginTop: 8, width: 290 }]}>
                     <Text style={styles.modeTxt}>🎉 {ev.title}</Text>
                     <Text style={{ color: '#ffd1e6', fontSize: 10, textAlign: 'center' }}>
                       {ev.blurb ? `${ev.blurb} • ` : ''}ends in {evLeft(ev)}{G.seen[`ev:${ev.id}`] ? ' • cleared ✓' : ' • first clear: 🥚🥚 +3◆'}
@@ -5071,7 +5090,7 @@ function Game() {
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 8 }}>
                 <Pressable
                   onPress={() => (G.daily && G.daily.d === dateKey() ? shareDaily() : start(DAILY_L))}
-                  style={[styles.modeBtn, { borderColor: '#ffd23b' }]}
+                  style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#ffd23b' }]}
                 >
                   <Text style={styles.modeTxt}>
                     {G.daily && G.daily.d === dateKey() ? 'DAILY ✓ SHARE' : '🔥 DAILY'}
@@ -5091,7 +5110,7 @@ function Game() {
                     jingle([4, 6, 9], 70);
                     render();
                   }}
-                  style={[styles.modeBtn, { borderColor: '#ff8a3b', opacity: G.chestDay === dateKey() ? 0.5 : 1 }]}
+                  style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#ff8a3b', opacity: G.chestDay === dateKey() ? 0.5 : 1 }]}
                 >
                   <Text style={styles.modeTxt}>{Date.now() - (G.chestFlash || 0) < 1600 ? `🎁 +${CHEST_SHARDS} ◆` : G.chestDay === dateKey() ? '🎁 OPENED ✓' : '🎁 DAILY CHEST'}</Text>
                 </Pressable>
@@ -5101,45 +5120,33 @@ function Game() {
                     G.status = 'shop';
                     render();
                   }}
-                  style={[styles.modeBtn, { borderColor: '#ff3bd4' }]}
+                  style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#ff3bd4' }]}
                 >
                   <Text style={styles.modeTxt}>🎯 MISSIONS</Text>
                 </Pressable>
-                <Pressable onPress={() => goStatus('race')} style={[styles.modeBtn, { borderColor: '#d58bff' }]}>
+                <Pressable onPress={() => goStatus('race')} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#d58bff' }]}>
                   <Text style={styles.modeTxt}>👻 GHOST RACE</Text>
                 </Pressable>
-                <Pressable onPress={() => goStatus('dex')} style={[styles.modeBtn, { borderColor: '#7dffb0' }]}>
+                <Pressable onPress={() => goStatus('dex')} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#7dffb0' }]}>
                   <Text style={styles.modeTxt}>{`🥚 ORBDEX${G.dex.eggs ? ` (${G.dex.eggs})` : ''}`}</Text>
                 </Pressable>
-                <Pressable onPress={() => { G.seasonMsg = ''; goStatus('season'); }} style={[styles.modeBtn, { borderColor: '#ffd23b' }]}>
+                <Pressable onPress={() => { G.seasonMsg = ''; goStatus('season'); }} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#ffd23b' }]}>
                   <Text style={styles.modeTxt}>{`🌟 SEASON ${seasonTier(G.prof)}/${SEASON.tiers}${seasonTier(G.prof) > seasonState(G.prof).claimed ? ' 🎁' : ''}`}</Text>
                 </Pressable>
-                <Pressable onPress={() => goStatus('profile')} style={[styles.modeBtn, { borderColor: '#9fd0ff' }]}>
+                <Pressable onPress={() => goStatus('profile')} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#9fd0ff' }]}>
                   <Text style={styles.modeTxt}>{`🏆 RANK ${rankLv(G.prof.xp)}`}</Text>
                 </Pressable>
-                <Pressable onPress={() => goStatus('settings', 'menu')} style={[styles.modeBtn, { borderColor: '#8888aa' }]}>
+                <Pressable onPress={() => goStatus('settings', 'menu')} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#8888aa' }]}>
                   <Text style={styles.modeTxt}>⚙ SETTINGS</Text>
                 </Pressable>
                 {G.stars[20] ? (
-                  <Pressable onPress={() => start(ENDLESS_L)} style={[styles.modeBtn, { borderColor: '#3be0c8' }]}>
+                  <Pressable onPress={() => start(ENDLESS_L)} style={[styles.modeBtn, styles.modeBtnS, { borderColor: '#3be0c8' }]}>
                     <Text style={styles.modeTxt}>∞ ENDLESS</Text>
                   </Pressable>
                 ) : null}
               </View>
-              {G.lastErr ? (
-                <Pressable
-                  onPress={() => {
-                    G.lastErr = '';
-                    AsyncStorage.removeItem('lastError').catch(() => {});
-                    render();
-                  }}
-                >
-                  <Text numberOfLines={5} style={{ color: '#ff3b6b', fontSize: 9, width: 280, marginTop: 6 }}>
-                    LAST ERROR (tap to clear): {G.lastErr}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </ScrollView>
+            </View>
+            </View>
           ) : G.status === 'season' ? (
             <SeasonScreen G={G} onClaim={claimSeason} onBack={() => goStatus('menu')} />
           ) : G.status === 'race' ? (
@@ -5491,6 +5498,8 @@ const styles = StyleSheet.create({
   hatch: { color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 8, letterSpacing: 1 },
   modeBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 16, borderWidth: 2.5, marginHorizontal: 5, marginVertical: 3, backgroundColor: 'rgba(255,255,255,0.16)' },
   modeTxt: { color: '#fff', fontFamily: FONT, fontSize: 13, letterSpacing: 1 },
+  modeBtnS: { paddingVertical: 8, paddingHorizontal: 12, marginHorizontal: 4, marginVertical: 2 },
+  menuFooter: { width: '100%', paddingTop: 4, paddingBottom: 10, alignItems: 'center', backgroundColor: 'rgba(10,6,34,0.94)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.16)' },
   adBtn: { marginTop: 10, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 14, borderWidth: 1.5, borderColor: '#ffd23b', backgroundColor: '#1a1a30' },
   adBtnTxt: { color: '#ffd23b', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
   adCover: { ...ABS_FILL, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
