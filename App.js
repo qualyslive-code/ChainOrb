@@ -284,7 +284,7 @@ const cfgOf = (L) => {
 };
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v23';
+const VERSION = 'v25';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -2265,7 +2265,8 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
 /* ============================== NEXTGEN v21: ORBDEX, RANKS, STORY, SETTINGS ============================== */
 let HAPTICS = true;
 let LITE = false;
-const MENUISH = ['menu', 'shop', 'dex', 'profile', 'settings', 'story', 'race'];
+let DOCK = true; // controls live in their own strip under the board; false = old free-floating pads
+const MENUISH = ['menu', 'shop', 'dex', 'profile', 'settings', 'story', 'race', 'season'];
 const RARITY = {
   c: { name: 'COMMON', col: '#9fd0ff' },
   r: { name: 'RARE', col: '#7dffb0' },
@@ -2352,6 +2353,23 @@ const STORY = {
     ['👑', 'Neon King', 'Every realm hangs on this board. Make it a legend.'],
   ],
 };
+
+// ---- Season Path (free track): earn Season XP from everything you already do, claim a reward every tier ----
+const SEASON = { id: 's1', name: 'FIREFLY FESTIVAL', s: 1792368000000, e: 1795996800000, tiers: 30, per: 800 };
+const SEASON_TITLES = { 10: 'Firefly Friend', 20: 'Lantern Bearer', 30: 'Firefly Keeper' };
+const tierReward = (t) => {
+  const big = t % 10 === 0;
+  return { sh: (t % 2 ? 2 : 1) + (big ? 5 : 0), eggs: (t % 3 === 0 ? 1 : 0) + (big ? 2 : 0), title: SEASON_TITLES[t] || '' };
+};
+const seasonActive = () => {
+  const n = Date.now();
+  return n >= SEASON.s && n < SEASON.e;
+};
+const seasonState = (p) => {
+  if (!p.season || p.season.id !== SEASON.id) p.season = { id: SEASON.id, xp: 0, claimed: 0 };
+  return p.season;
+};
+const seasonTier = (p) => Math.min(SEASON.tiers, Math.floor(seasonState(p).xp / SEASON.per));
 
 function HatchReveal({ d, isNew, n }) {
   const sc = useRef(new Animated.Value(0)).current;
@@ -2440,6 +2458,7 @@ function ProfileScreen({ G, onBack }) {
     <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', paddingVertical: 14 }}>
       <Text style={styles.title}>PROFILE</Text>
       <Text style={[styles.hint, { color: '#ffd23b', fontSize: 18 }]}>RANK {lv}  •  {rankName(lv).toUpperCase()}</Text>
+      {p.title ? <Text style={[styles.hint, { color: '#d58bff' }]}>🏅 {p.title}</Text> : null}
       <View style={{ width: 260, height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.15)', marginTop: 6, overflow: 'hidden' }}>
         <View style={{ width: `${Math.round(pct * 100)}%`, height: 12, backgroundColor: '#2bff88' }} />
       </View>
@@ -2472,7 +2491,7 @@ function ProfileScreen({ G, onBack }) {
   );
 }
 
-function SettingsScreen({ onToggleHaptics, onToggleLite, onReplayStory, onBack }) {
+function SettingsScreen({ onToggleHaptics, onToggleLite, onToggleDock, onReplayStory, onBack }) {
   const row = (label, on, fn) => (
     <Pressable onPress={fn} style={[styles.modeBtn, { width: 260, marginTop: 10, borderColor: on ? '#2bff88' : '#2a2a4a' }]}>
       <Text style={styles.modeTxt}>{label}: {on ? 'ON' : 'OFF'}</Text>
@@ -2481,10 +2500,11 @@ function SettingsScreen({ onToggleHaptics, onToggleLite, onReplayStory, onBack }
   return (
     <>
       <Text style={styles.title}>SETTINGS</Text>
+      {row('🎮 DOCKED CONTROLS', DOCK, onToggleDock)}
       {row('📳 HAPTICS', HAPTICS, onToggleHaptics)}
       {row('🪶 LITE EFFECTS', LITE, onToggleLite)}
       <Text style={[styles.hint, { fontSize: 11, textAlign: 'center', maxWidth: 280, marginTop: 6 }]}>
-        Lite effects reduces shake, flash and slow-motion. Good for older phones.
+        Docked controls give the pads their own strip under the board. Turn off to float and drag them. Lite effects reduces shake, flash and slow-motion.
       </Text>
       <Pressable onPress={onReplayStory} style={[styles.modeBtn, { width: 260, marginTop: 14 }]}>
         <Text style={styles.modeTxt}>📖 REPLAY STORY SCENES</Text>
@@ -2774,6 +2794,55 @@ function RaceScreen({ G, onTop, onLast, onShare, onCode, onBack }) {
   );
 }
 
+
+function SeasonScreen({ G, onClaim, onBack }) {
+  const p = G.prof;
+  const st = seasonState(p);
+  const tier = seasonTier(p);
+  const claimable = tier - st.claimed;
+  const now = Date.now();
+  const day = Math.max(0, Math.min(42, Math.floor((now - SEASON.s) / 86400000) + 1));
+  const into = tier >= SEASON.tiers ? SEASON.per : st.xp % SEASON.per;
+  const pct = Math.round((into / SEASON.per) * 100);
+  const sub = now < SEASON.s ? 'Starts soon' : now >= SEASON.e ? 'Season ended. Claim what you earned.' : `Day ${day}/42`;
+  return (
+    <ScrollView style={{ width: '100%' }} contentContainerStyle={{ alignItems: 'center', paddingVertical: 14 }}>
+      <Text style={styles.title}>SEASON PATH</Text>
+      <Text style={[styles.hint, { color: '#ffd23b', fontSize: 16 }]}>{SEASON.name}</Text>
+      <Text style={styles.hint}>{sub}  •  Tier {tier}/{SEASON.tiers}</Text>
+      <View style={{ width: 280, height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.15)', marginTop: 6, overflow: 'hidden' }}>
+        <View style={{ width: `${pct}%`, height: 12, backgroundColor: '#ffd23b' }} />
+      </View>
+      <Text style={[styles.hint, { fontSize: 11 }]}>{into}/{SEASON.per} XP to next tier  •  every pop, win and chain counts</Text>
+      <Pressable
+        disabled={claimable < 1}
+        onPress={onClaim}
+        style={[styles.play, { marginTop: 10, paddingVertical: 12, opacity: claimable < 1 ? 0.4 : 1 }]}
+      >
+        <Text style={styles.playTxt}>{claimable < 1 ? 'NOTHING TO CLAIM' : `CLAIM ${claimable} TIER${claimable > 1 ? 'S' : ''}`}</Text>
+      </Pressable>
+      {G.seasonMsg ? <Text style={[styles.hint, { marginTop: 8, color: '#2bff88' }]}>{G.seasonMsg}</Text> : null}
+      {Array.from({ length: SEASON.tiers }, (_, i) => i + 1).map((t) => {
+        const r = tierReward(t);
+        const got = t <= st.claimed;
+        const ready = !got && t <= tier;
+        return (
+          <View key={t} style={{ width: 300, flexDirection: 'row', alignItems: 'center', marginTop: 5, opacity: got ? 0.55 : ready ? 1 : 0.7, borderWidth: ready ? 2 : 0, borderColor: '#ffd23b', borderRadius: 10, padding: ready ? 4 : 0 }}>
+            <Text style={{ width: 34, color: '#fff', fontFamily: FONT, fontSize: 16 }}>{t}</Text>
+            <Text style={{ flex: 1, color: r.title ? '#ffd23b' : '#dde', fontSize: 13 }}>
+              {r.title ? `🏅 ${r.title}   ` : ''}◆{r.sh}{r.eggs ? `  🥚${r.eggs}` : ''}
+            </Text>
+            <Text style={{ fontSize: 16 }}>{got ? '✅' : ready ? '🎁' : '🔒'}</Text>
+          </View>
+        );
+      })}
+      <Pressable style={{ marginTop: 16 }} onPress={onBack}>
+        <Text style={styles.hint}>BACK</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
 function StarReveal({ filled, delay, size }) {
   const sc = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -2868,7 +2937,7 @@ function skyBands(stops, n = 36) {
 }
 
 // Draggable floating pad: drag the grip anywhere, double-tap the grip to reset. Position is remembered.
-function FloatPad({ id, anchor, bounds, children }) {
+function FloatPad({ id, anchor, bounds, locked, children }) {
   const pos = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const base = useRef({ x: 0, y: 0 });
   const lastTap = useRef(0);
@@ -2881,6 +2950,12 @@ function FloatPad({ id, anchor, bounds, children }) {
     return { x: nx, y: ny };
   };
   useEffect(() => {
+    if (locked) {
+      base.current = { x: 0, y: 0 };
+      pos.setValue({ x: 0, y: 0 });
+      setEdit(false);
+      return;
+    }
     AsyncStorage.getItem('pad3_' + id)
       .then((v) => {
         if (!v) return;
@@ -2888,7 +2963,7 @@ function FloatPad({ id, anchor, bounds, children }) {
         base.current = place(o.x || 0, o.y || 0);
       })
       .catch(() => {});
-  }, []);
+  }, [locked]);
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -2917,19 +2992,21 @@ function FloatPad({ id, anchor, bounds, children }) {
       pointerEvents="box-none"
       style={[anchor === 'left' ? styles.padL : styles.padR, { transform: pos.getTranslateTransform() }]}
     >
-      <View {...pan.panHandlers} hitSlop={10} style={[styles.grip, edit && styles.gripOn]}>
-        {edit ? (
-          <Text style={[styles.gripTxt, { color: '#1a0f3a' }]}>✥ DRAG ME</Text>
-        ) : (
-          <View style={styles.gripDots}>
-            {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-              <View key={n} style={styles.gripDot} />
-            ))}
-          </View>
-        )}
-      </View>
+      {!locked && (
+        <View {...pan.panHandlers} hitSlop={10} style={[styles.grip, edit && styles.gripOn]}>
+          {edit ? (
+            <Text style={[styles.gripTxt, { color: '#1a0f3a' }]}>✥ DRAG ME</Text>
+          ) : (
+            <View style={styles.gripDots}>
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                <View key={n} style={styles.gripDot} />
+              ))}
+            </View>
+          )}
+        </View>
+      )}
       {children}
-      {edit && <View {...pan.panHandlers} style={[ABS_FILL, styles.padEdit]} />}
+      {!locked && edit && <View {...pan.panHandlers} style={[ABS_FILL, styles.padEdit]} />}
     </Animated.View>
   );
 }
@@ -3026,6 +3103,7 @@ function Game() {
     dex: { eggs: 1, own: {}, companion: '', last: null },
     prof: { xp: 0, s: { pops: 0, games: 0, wins: 0, bestChain: 0, perfects: 0, clutches: 0, fevers: 0 }, ach: {} },
     seen: {},
+    seasonMsg: '',
     race: null,
     raceRes: null,
     raceMsg: '',
@@ -3332,7 +3410,7 @@ function Game() {
   const saveNx = () => {
     AsyncStorage.setItem(
       'nextgen',
-      JSON.stringify({ dex: G.dex, prof: G.prof, seen: G.seen, set: { haptics: HAPTICS, lite: LITE } })
+      JSON.stringify({ dex: G.dex, prof: G.prof, seen: G.seen, set: { haptics: HAPTICS, lite: LITE, dock: DOCK } })
     ).catch(() => {});
   };
   const popBanner = (txt) => {
@@ -3364,6 +3442,7 @@ function Game() {
     if (G.replay) return;
     const before = rankLv(G.prof.xp);
     G.prof.xp += n;
+    if (seasonActive()) seasonState(G.prof).xp += n;
     const after = rankLv(G.prof.xp);
     if (after > before) {
       G.rankUp = after;
@@ -3410,6 +3489,28 @@ function Game() {
     if (rar !== 'c') sfx('choir');
     buzz(4);
     checkAch();
+    saveNx();
+    render();
+  };
+  const claimSeason = () => {
+    const st = seasonState(G.prof);
+    const tier = seasonTier(G.prof);
+    let sh = 0, eggs = 0, title = '';
+    for (let t = st.claimed + 1; t <= tier; t++) {
+      const r = tierReward(t);
+      sh += r.sh;
+      eggs += r.eggs;
+      if (r.title) title = r.title;
+    }
+    if (tier <= st.claimed) return;
+    st.claimed = tier;
+    G.shards += sh;
+    G.dex.eggs += eggs;
+    if (title) G.prof.title = title;
+    G.seasonMsg = `+${sh} ◆${eggs ? `  +${eggs} 🥚` : ''}${title ? `  🏅 ${title}` : ''}`;
+    jingle([4, 6, 9], 70);
+    buzz(3);
+    saveMeta();
     saveNx();
     render();
   };
@@ -4258,11 +4359,14 @@ function Game() {
             xp: j.prof.xp || 0,
             s: Object.assign({ pops: 0, games: 0, wins: 0, bestChain: 0, perfects: 0, clutches: 0, fevers: 0 }, j.prof.s || {}),
             ach: j.prof.ach || {},
+            season: j.prof.season,
+            title: j.prof.title,
           };
         }
         G.seen = j.seen || {};
         HAPTICS = !(j.set && j.set.haptics === false);
         LITE = !!(j.set && j.set.lite);
+        DOCK = !(j.set && j.set.dock === false);
         render();
       })
       .catch(() => {});
@@ -4337,17 +4441,19 @@ function Game() {
   const hs = width / 768; // mockup scale
   const hudH = Math.round(hs * 168);
   const RAIL = Math.round(106 * hs);
+  const dockH = DOCK ? Math.max(Math.round(320 * hs), Math.round(300 * hs)) + (BOTTOM_PAD - BOARD_BOTTOM) + 4 : 0;
   const cell = Math.max(
     24,
-    Math.min(Math.floor((width - RAIL - 12) / COLS), Math.floor((height - STATUS_H - hudH - BOARD_BOTTOM - 8) / ROWS))
+    Math.min(Math.floor((width - RAIL - 12) / COLS), Math.floor((height - STATUS_H - hudH - BOARD_BOTTOM - dockH - 8) / ROWS))
   );
-  const boardTop = height - BOARD_BOTTOM - (cell * ROWS + 8);
+  const boardTop = height - BOARD_BOTTOM - dockH - (cell * ROWS + 8);
+  const boardPadL = RAIL + Math.max(0, Math.floor((width - RAIL - (cell * COLS + 8)) / 2));
 
   G.cell = cell;
   const danger = G.board.slice(0, 4).some((row) => row.some(Boolean));
   const display = G.board.map((row) => row.slice());
 
-  const realm = realmOf(['menu', 'dex', 'profile', 'settings', 'race'].includes(G.status) ? G.unlocked : G.level);
+  const realm = realmOf(['menu', 'dex', 'profile', 'settings', 'race', 'season'].includes(G.status) ? G.unlocked : G.level);
   useEffect(() => {
     setMusic(realm);
     setInstrument(realm);
@@ -4442,7 +4548,7 @@ function Game() {
         </View>
       )}
 
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', width, paddingLeft: RAIL }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', width, paddingLeft: boardPadL }}>
         {!MENUISH.includes(G.status) && (
         <View style={{ position: 'absolute', left: Math.round(2 * hs), top: 6, width: Math.round(100 * hs), alignItems: 'center', zIndex: 5 }}>
           <View style={{ width: Math.round(100 * hs), height: Math.round(312 * hs), marginBottom: 4 }}>
@@ -4880,6 +4986,9 @@ function Game() {
                 <Pressable onPress={() => goStatus('dex')} style={[styles.modeBtn, { borderColor: '#7dffb0' }]}>
                   <Text style={styles.modeTxt}>{`🥚 ORBDEX${G.dex.eggs ? ` (${G.dex.eggs})` : ''}`}</Text>
                 </Pressable>
+                <Pressable onPress={() => { G.seasonMsg = ''; goStatus('season'); }} style={[styles.modeBtn, { borderColor: '#ffd23b' }]}>
+                  <Text style={styles.modeTxt}>{`🌟 SEASON ${seasonTier(G.prof)}/${SEASON.tiers}${seasonTier(G.prof) > seasonState(G.prof).claimed ? ' 🎁' : ''}`}</Text>
+                </Pressable>
                 <Pressable onPress={() => goStatus('profile')} style={[styles.modeBtn, { borderColor: '#9fd0ff' }]}>
                   <Text style={styles.modeTxt}>{`🏆 RANK ${rankLv(G.prof.xp)}`}</Text>
                 </Pressable>
@@ -4906,6 +5015,8 @@ function Game() {
                 </Pressable>
               ) : null}
             </ScrollView>
+          ) : G.status === 'season' ? (
+            <SeasonScreen G={G} onClaim={claimSeason} onBack={() => goStatus('menu')} />
           ) : G.status === 'race' ? (
             <RaceScreen
               G={G}
@@ -4932,6 +5043,7 @@ function Game() {
             <SettingsScreen
               onToggleHaptics={() => { HAPTICS = !HAPTICS; saveNx(); render(); }}
               onToggleLite={() => { LITE = !LITE; saveNx(); render(); }}
+              onToggleDock={() => { DOCK = !DOCK; saveNx(); render(); }}
               onReplayStory={() => { G.seen = {}; saveNx(); render(); }}
               onBack={() => goStatus(G.back || 'menu')}
             />
@@ -5140,7 +5252,7 @@ function Game() {
         const zoneA = (cx, cy, r) => ({ position: 'absolute', left: (cx - r) * ka, top: (cy - r) * ka, width: r * 2 * ka, height: r * 2 * ka, borderRadius: r * ka, alignItems: 'center', justifyContent: 'flex-end' });
         return (
           <>
-            <FloatPad id="L" anchor="left" bounds={{ minX: 0, maxX: width - padSz - 24, minY: -(height - padSz - 120), maxY: 0 }}>
+            <FloatPad id="L" anchor="left" locked={DOCK} bounds={{ minX: 0, maxX: width - padSz - 24, minY: -(height - padSz - 120), maxY: 0 }}>
               <View style={{ width: padSz, height: padSz, opacity: on ? 1 : 0.55 }}>
                 <PadArt size={padSz} pu={pU} pl={pL} pr={pR} pd={pD} />
                 <HoldButton dim={!on} press={pU} onPress={() => rotate(1)} style={zone(160, 95, 42)} />
@@ -5149,7 +5261,7 @@ function Game() {
                 <HoldButton dim={!on} press={pD} onPress={softDrop} repeat repeatMs={56} style={zone(160, 225, 42)} />
               </View>
             </FloatPad>
-            <FloatPad id="R" anchor="right" bounds={{ minX: -(width - actSz - 24), maxX: 0, minY: -(height - actSz - 120), maxY: 0 }}>
+            <FloatPad id="R" anchor="right" locked={DOCK} bounds={{ minX: -(width - actSz - 24), maxX: 0, minY: -(height - actSz - 120), maxY: 0 }}>
               <View style={{ width: actSz, height: actSz, opacity: on ? 1 : 0.55 }}>
                 <ActArt size={actSz} pUndo={pUndo} pTurn={pTurn} pDrop={pDrop} pulse={svPulse} />
                 <HoldButton dim={!on} press={pUndo} onPress={() => rotate(-1)} style={zoneA(ACT.undo[0], ACT.undo[1], ACT.undo[2])} />
