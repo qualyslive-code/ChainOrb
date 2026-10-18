@@ -284,7 +284,7 @@ const cfgOf = (L) => {
 };
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v26';
+const VERSION = 'v27';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -2915,7 +2915,24 @@ try {
   const m = require('react-native-safe-area-context').initialWindowMetrics;
   if (m && m.insets) SAFE_BOTTOM = m.insets.bottom;
 } catch (e) {}
-const BOTTOM_PAD = SAFE_BOTTOM != null ? SAFE_BOTTOM + 14 : Platform.OS === 'android' ? 52 : 24;
+// v27 immersive: system bars are hidden during play, so only a small gesture margin is reserved at the bottom.
+// expo-navigation-bar is optional: if it is not installed the game falls back to the old inset and nothing breaks.
+let NavBar = null;
+try {
+  NavBar = require('expo-navigation-bar');
+} catch (e) {}
+const goImmersive = () => {
+  if (Platform.OS !== 'android' || !NavBar) return;
+  try {
+    const a = NavBar.setVisibilityAsync && NavBar.setVisibilityAsync('hidden');
+    if (a && a.catch) a.catch(() => {});
+  } catch (e) {}
+  try {
+    const b = NavBar.setBehaviorAsync && NavBar.setBehaviorAsync('overlay-swipe');
+    if (b && b.catch) b.catch(() => {});
+  } catch (e) {}
+};
+const BOTTOM_PAD = SAFE_BOTTOM != null ? (NavBar ? Math.min(SAFE_BOTTOM, 18) : SAFE_BOTTOM) + 14 : Platform.OS === 'android' ? (NavBar ? 32 : 52) : 24;
 const BOARD_BOTTOM = Math.max(4, BOTTOM_PAD - 10); // keeps the last row clear of the system nav bar
 const CONTROLS_H = 86;
 const HUD_H = 62; // compact HUD band at the top of the one window
@@ -4566,6 +4583,14 @@ function Game() {
   }, []);
 
   /* ---------- draw ---------- */
+  // v27: full-screen. Hide system bars on launch and every time the app returns to the foreground.
+  useEffect(() => {
+    goImmersive();
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') goImmersive();
+    });
+    return () => sub.remove();
+  }, []);
   const hs = width / 768; // mockup scale
   const hudH = Math.round(hs * 168);
   const RAIL = Math.round(106 * hs);
@@ -4644,7 +4669,7 @@ function Game() {
 
   return (
     <View style={[styles.root, { backgroundColor: T.bg }]}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" hidden translucent backgroundColor="transparent" />
       <View pointerEvents="none" style={ABS_FILL}>
         {realm === 0 && <ForestScene W={width} H={height} clock={svClock} />}
         {realm !== 0 && skyBands(T.sky).map((c, i) => (
