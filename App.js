@@ -284,7 +284,7 @@ const cfgOf = (L) => {
 };
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v25';
+const VERSION = 'v26';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -3044,6 +3044,121 @@ function HoldButton({ onPress, repeat, repeatMs = 62, delayMs = 150, style, dim,
   );
 }
 
+// v26 INPUT: one raw-touch controller per pad. Raw onTouch* events are delivered for every finger independently
+// of React Native's single-responder system, so (1) both thumbs work at once, (2) a thumb can roll from ► to ◄
+// and the direction switches instantly, (3) no Pressable can steal or cancel another finger.
+const padHit = (x, y) => {
+  const vx = x - 160;
+  const vy = y - 160;
+  const d = Math.hypot(vx, vy);
+  if (d < 22 || d > 195) return null; // centre gem = neutral
+  if (Math.abs(vx) > Math.abs(vy)) return vx < 0 ? 'l' : 'r';
+  return vy < 0 ? 'u' : 'd';
+};
+const actHit = (x, y) => {
+  let best = null;
+  let bd = 1;
+  for (const k of ['undo', 'turn', 'drop']) {
+    const [cx, cy, r] = ACT[k];
+    const lim = k === 'drop' ? 1.0 : 1.2; // hard drop is destructive: no extra reach
+    const d = Math.hypot(x - cx, y - cy) / (r * lim);
+    if (d < bd) {
+      bd = d;
+      best = k;
+    }
+  }
+  return best;
+};
+function TouchZone({ size, units, hit, zones, slide, style, children }) {
+  const k = size / units;
+  const live = useRef({});
+  const zref = useRef(zones);
+  zref.current = zones;
+  const href = useRef(hit);
+  href.current = hit;
+  const leave = (s) => {
+    clearTimeout(s.t);
+    clearInterval(s.i);
+    s.t = null;
+    s.i = null;
+    const z = s.key && zref.current[s.key];
+    if (z && z.press) z.press.value = withTiming(0, { duration: 110 });
+    s.key = null;
+  };
+  const enter = (s, key) => {
+    leave(s);
+    if (!key) return;
+    s.key = key;
+    const z = zref.current[key];
+    if (z.press) z.press.value = withTiming(1, { duration: 50 });
+    Haptics.selectionAsync().catch(() => {});
+    z.fire(true);
+    if (z.rep) {
+      s.t = setTimeout(() => {
+        s.i = setInterval(() => {
+          const zz = zref.current[key];
+          if (zz) zz.fire(false);
+        }, z.rep);
+      }, 150);
+    }
+  };
+  const releaseAll = () => {
+    for (const id of Object.keys(live.current)) leave(live.current[id]);
+    live.current = {};
+  };
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st !== 'active') releaseAll();
+    });
+    return () => {
+      sub.remove();
+      releaseAll();
+    };
+  }, []);
+  const at = (t) => href.current(t.locationX / k, t.locationY / k);
+  return (
+    <View
+      pointerEvents="box-only"
+      style={style}
+      onTouchStart={(e) => {
+        for (const t of e.nativeEvent.changedTouches) {
+          const s = (live.current[t.identifier] = { key: null, t: null, i: null, start: at(t), dead: false });
+          enter(s, s.start);
+        }
+      }}
+      onTouchMove={(e) => {
+        for (const t of e.nativeEvent.changedTouches) {
+          const s = live.current[t.identifier];
+          if (!s) continue;
+          const key = at(t);
+          if (slide) {
+            if (key !== s.key) enter(s, key);
+          } else if (!s.dead && key !== s.start) {
+            s.dead = true; // action buttons: sliding off cancels, never switches
+            leave(s);
+          }
+        }
+      }}
+      onTouchEnd={(e) => {
+        for (const t of e.nativeEvent.changedTouches) {
+          const s = live.current[t.identifier];
+          if (s) leave(s);
+          delete live.current[t.identifier];
+        }
+      }}
+      onTouchCancel={(e) => {
+        for (const t of e.nativeEvent.changedTouches) {
+          const s = live.current[t.identifier];
+          if (s) leave(s);
+          delete live.current[t.identifier];
+        }
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
 /* ============================== GAME ============================== */
 function Game() {
   const { width, height } = useWindowDimensions();
@@ -3250,6 +3365,12 @@ function Game() {
     },
     sync() {
       if (G.piece) ghostTo(G.piece);
+    },
+    // a tap made while the board was resolving is applied to the next piece (max 700ms old)
+    flush() {
+      const b = G.buf;
+      G.buf = null;
+      if (b && Date.now() - b.t < 700 && G.status === 'playing' && G.piece) b.fn();
     },
   };
   const bannerScale = useRef(new Animated.Value(0)).current;
@@ -3909,6 +4030,7 @@ function Game() {
   const resolve = async () => {
     G.status = 'resolving';
     G.chain = 0;
+    G.buf = null;
     const wasDanger = G.board.slice(0, 4).some((row) => row.some(Boolean));
     const feverAtLock = G.feverPcs > 0;
     render();
@@ -4091,6 +4213,7 @@ function Game() {
     shiftQueue();
     G.status = 'playing';
     render();
+    if (G.fx) G.fx.flush();
   };
 
   const lock = () => {
@@ -4220,8 +4343,10 @@ function Game() {
         G.gx = 0;
       },
       onPanResponderMove: (_, g) => {
-        const dx = g.dx - G.gx;
-        if (Math.abs(dx) >= G.cell * 0.55) {
+        // wider dead band (0.65 cell) so a small wobble never reverses the piece; fast swipes can step several cells
+        for (let n = 0; n < 3; n++) {
+          const dx = g.dx - G.gx;
+          if (Math.abs(dx) < G.cell * 0.65) break;
           move(dx > 0 ? 1 : -1);
           G.gx += dx > 0 ? G.cell : -G.cell;
         }
@@ -5244,34 +5369,49 @@ function Game() {
       <>
       {(() => {
         const padSz = Math.round(320 * hs);
-        const k = padSz / 320;
         const actSz = Math.round(300 * hs);
         const ka = actSz / 300;
         const on = G.status === 'playing';
-        const zone = (cx, cy, r) => ({ position: 'absolute', left: (cx - r) * k, top: (cy - r) * k, width: r * 2 * k, height: r * 2 * k, borderRadius: r * k });
-        const zoneA = (cx, cy, r) => ({ position: 'absolute', left: (cx - r) * ka, top: (cy - r) * ka, width: r * 2 * ka, height: r * 2 * ka, borderRadius: r * ka, alignItems: 'center', justifyContent: 'flex-end' });
+        // taps made while the board resolves are remembered (moves/turns only) and replayed on the next piece
+        const tap = (fn, buffer) => (first) => {
+          if (G.status === 'resolving') {
+            if (first && buffer) G.buf = { fn, t: Date.now() };
+            return;
+          }
+          fn();
+        };
+        const padZones = {
+          u: { fire: tap(() => rotate(1), true), press: pU },
+          l: { fire: tap(() => move(-1), true), press: pL, rep: 64 },
+          r: { fire: tap(() => move(1), true), press: pR, rep: 64 },
+          d: { fire: tap(softDrop, false), press: pD, rep: 56 },
+        };
+        const actZones = {
+          undo: { fire: tap(() => rotate(-1), true), press: pUndo },
+          turn: { fire: tap(() => rotate(1), true), press: pTurn },
+          drop: { fire: tap(hardDrop, false), press: pDrop },
+        };
+        const lbl = (k, txt, fs, mb) => {
+          const [cx, cy, r] = ACT[k];
+          return (
+            <Text pointerEvents="none" style={[styles.actLbl2, { position: 'absolute', left: (cx - r) * ka, width: 2 * r * ka, bottom: (300 - (cy + r - mb)) * ka, textAlign: 'center', fontSize: fs * ka }]}>
+              {txt}
+            </Text>
+          );
+        };
         return (
           <>
             <FloatPad id="L" anchor="left" locked={DOCK} bounds={{ minX: 0, maxX: width - padSz - 24, minY: -(height - padSz - 120), maxY: 0 }}>
-              <View style={{ width: padSz, height: padSz, opacity: on ? 1 : 0.55 }}>
+              <TouchZone size={padSz} units={320} hit={padHit} zones={padZones} slide style={{ width: padSz, height: padSz, opacity: on ? 1 : 0.55 }}>
                 <PadArt size={padSz} pu={pU} pl={pL} pr={pR} pd={pD} />
-                <HoldButton dim={!on} press={pU} onPress={() => rotate(1)} style={zone(160, 95, 42)} />
-                <HoldButton dim={!on} press={pL} onPress={() => move(-1)} repeat repeatMs={64} style={zone(96, 160, 42)} />
-                <HoldButton dim={!on} press={pR} onPress={() => move(1)} repeat repeatMs={64} style={zone(224, 160, 42)} />
-                <HoldButton dim={!on} press={pD} onPress={softDrop} repeat repeatMs={56} style={zone(160, 225, 42)} />
-              </View>
+              </TouchZone>
             </FloatPad>
             <FloatPad id="R" anchor="right" locked={DOCK} bounds={{ minX: -(width - actSz - 24), maxX: 0, minY: -(height - actSz - 120), maxY: 0 }}>
-              <View style={{ width: actSz, height: actSz, opacity: on ? 1 : 0.55 }}>
+              <TouchZone size={actSz} units={300} hit={actHit} zones={actZones} style={{ width: actSz, height: actSz, opacity: on ? 1 : 0.55 }}>
                 <ActArt size={actSz} pUndo={pUndo} pTurn={pTurn} pDrop={pDrop} pulse={svPulse} />
-                <HoldButton dim={!on} press={pUndo} onPress={() => rotate(-1)} style={zoneA(ACT.undo[0], ACT.undo[1], ACT.undo[2])} />
-                <HoldButton dim={!on} press={pTurn} onPress={() => rotate(1)} style={zoneA(ACT.turn[0], ACT.turn[1], ACT.turn[2])}>
-                  <Text style={[styles.actLbl2, { fontSize: 31 * ka, marginBottom: 20 * ka }]}>TURN</Text>
-                </HoldButton>
-                <HoldButton dim={!on} press={pDrop} onPress={hardDrop} style={zoneA(ACT.drop[0], ACT.drop[1], ACT.drop[2])}>
-                  <Text style={[styles.actLbl2, { fontSize: 35 * ka, marginBottom: 22 * ka }]}>DROP</Text>
-                </HoldButton>
-              </View>
+                {lbl('turn', 'TURN', 31, 20)}
+                {lbl('drop', 'DROP', 35, 22)}
+              </TouchZone>
             </FloatPad>
           </>
         );
