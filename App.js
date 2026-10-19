@@ -157,7 +157,7 @@ const LEVELS = [
     t: 'chain', g: 3, c: 3, s: 900,
     pre: ['...2..', '..22..', '..33..', '3311..', '2322..'],
     seq: [[1, 1]],
-    coach: 'Slide the red pair right, then DROP',
+    coach: 'Slide the red pair right, then swipe down',
   },
   { t: 'score', g: 350, c: 3, s: 800, m: 30, coach: 'Moves are limited. Make each one count' },
   { t: 'score', g: 450, c: 4, s: 760, coach: 'A new color joins' },
@@ -239,7 +239,7 @@ const withTower = (cfg, tw, hint) => {
 };
 // handcrafted campaign levels that open with a tower: [chain, tower index, beam hint?, coach]
 const AUTH = {
-  3: [3, 0, true, 'Slide the pair under the beam, then DROP'],
+  3: [3, 0, true, 'Slide the pair under the beam, then swipe down'],
   5: [3, 1, true, 'See the beam? One drop sets off a chain'],
   7: [3, 2, true, 'Drop on the beam to reach a x3 chain'],
   12: [4, 0, true, 'Bigger chain. Follow the beam'],
@@ -1740,89 +1740,16 @@ function usePressOp(press, max) {
   });
 }
 
-const PAD_BTNS = [
-  { k: 'u', dx: 0, dy: -65, rot: 0 },
-  { k: 'l', dx: -64, dy: 0, rot: -Math.PI / 2 },
-  { k: 'r', dx: 64, dy: 0, rot: Math.PI / 2 },
-  { k: 'd', dx: 0, dy: 65, rot: Math.PI },
-];
-function PadBtn({ cx, cy, rot, press }) {
-  const t = usePressT(press, cx, cy);
-  const glow = usePressOp(press, 0.45);
-  return (
-    <Group transform={t}>
-      <Circle cx={cx} cy={cy + 3} r={42} color="rgba(0,0,0,0.4)" />
-      <Circle cx={cx} cy={cy} r={42}>
-        <LinearGradient start={vec(cx - 40, cy - 40)} end={vec(cx + 40, cy + 40)} colors={['#f6cf74', '#c98a22', '#7a4a10']} />
-      </Circle>
-      <Circle cx={cx} cy={cy} r={37}>
-        <RadialGradient c={vec(cx - 12, cy - 15)} r={56} colors={['#e0c6ff', '#9a68e6', '#5a30b0', '#38207a']} positions={[0, 0.35, 0.75, 1]} />
-      </Circle>
-      <Oval x={cx - 24} y={cy - 33} width={48} height={24} color="rgba(255,255,255,0.3)" />
-      <Group transform={[{ translateX: cx }, { translateY: cy }, { rotate: rot }]}>
-        <Path path={svgPath('M0 -16L16 11L-16 11Z')} color="#f6ecff" />
-        <Path path={svgPath('M0 -16L16 11L-16 11Z')} style="stroke" strokeWidth={4} strokeJoin="round" color="#f6ecff" />
-      </Group>
-      <Circle cx={cx} cy={cy} r={37} color="#ffffff" opacity={glow} />
-    </Group>
-  );
-}
-// d-pad, 320x320 mockup units
-const PadArt = React.memo(function PadArt({ size, pu, pl, pr, pd }) {
-  const k = size / 320;
-  const P = { u: pu, l: pl, r: pr, d: pd };
-  return (
-    <Canvas pointerEvents="none" style={{ width: size, height: size }}>
-      <Group transform={[{ scale: k }]}>
-        <Circle cx={160} cy={166} r={150} color="rgba(0,0,0,0.18)" />
-        <Circle cx={160} cy={160} r={150}>
-          <RadialGradient c={vec(120, 105)} r={230} colors={['rgba(210,200,255,0.20)', 'rgba(120,100,220,0.14)', 'rgba(255,255,255,0.10)']} positions={[0, 0.7, 1]} />
-        </Circle>
-        <Circle cx={160} cy={160} r={104} color="rgba(40,22,100,0.34)" />
-        <Circle cx={160} cy={160} r={149} style="stroke" strokeWidth={5} color="rgba(235,226,255,0.55)" />
-        <Circle cx={160} cy={160} r={136} style="stroke" strokeWidth={2} color="rgba(255,255,255,0.16)" />
-        <Path path={svgPath('M52 110A120 120 0 0 1 150 38')} style="stroke" strokeWidth={6} strokeCap="round" color="rgba(255,255,255,0.45)" />
-        <Path path={svgPath('M160 40L176 144L280 160L176 176L160 280L144 176L40 160L144 144Z')} style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.18)" />
-        {PAD_BTNS.map((b) => (
-          <PadBtn key={b.k} cx={160 + b.dx} cy={160 + b.dy} rot={b.rot} press={P[b.k]} />
-        ))}
-        <Circle cx={160} cy={160} r={24}>
-          <LinearGradient start={vec(140, 140)} end={vec(180, 180)} colors={GOLD} />
-        </Circle>
-        <Circle cx={160} cy={160} r={19}>
-          <RadialGradient c={vec(154, 153)} r={26} colors={['#c89cff', '#6a30c0', '#2a1060']} />
-        </Circle>
-        <Circle cx={154} cy={153} r={4} color="rgba(255,255,255,0.8)" />
-      </Group>
-    </Canvas>
-  );
-});
-
-// action cluster, 300x300 mockup units: UNDO (left-bottom), TURN (top-right), DROP (bottom-right)
-const ACT = { undo: [50, 214, 49], turn: [214, 80, 60], drop: [212, 222, 72] };
-const ActArt = React.memo(function ActArt({ size, pUndo, pTurn, pDrop, pulse }) {
-  const k = size / 300;
+// action cluster, 120x120 mockup units: UNDO only (d-pad, TURN and DROP removed: the whole screen is the control)
+const ACT = { undo: [60, 58, 49] };
+const ActArt = React.memo(function ActArt({ size, pUndo }) {
+  const k = size / 120;
   const [ux, uy, ur] = ACT.undo;
-  const [tx, ty, tr] = ACT.turn;
-  const [dx, dy, dr] = ACT.drop;
   const tU = usePressT(pUndo, ux, uy);
-  const tT = usePressT(pTurn, tx, ty);
-  const tD = usePressT(pDrop, dx, dy);
-  const aura = useDerivedValue(() => {
-    'worklet';
-    return 0.55 + 0.45 * pulse.value;
-  });
-  const auraT = useDerivedValue(() => {
-    'worklet';
-    return [{ scale: 0.96 + 0.1 * pulse.value }];
-  });
   const gU = usePressOp(pUndo, 0.4);
-  const gT = usePressOp(pTurn, 0.4);
-  const gD = usePressOp(pDrop, 0.4);
   return (
     <Canvas pointerEvents="none" style={{ width: size, height: size }}>
       <Group transform={[{ scale: k }]}>
-        {/* undo */}
         <Group transform={tU}>
           <Sphere cx={ux} cy={uy} R={ur} body={['#e0b27a', '#a56a3e', '#5e3522']} />
           <Group transform={[{ translateX: ux }, { translateY: uy + 2 }, { scaleX: -1 }]}>
@@ -1830,27 +1757,6 @@ const ActArt = React.memo(function ActArt({ size, pUndo, pTurn, pDrop, pulse }) 
             <Path path={svgPath(ROT_ARROW.head)} color="#fff1cf" />
           </Group>
           <Circle cx={ux} cy={uy} r={ur * 0.87} color="#ffffff" opacity={gU} />
-        </Group>
-        {/* turn */}
-        <Group transform={tT}>
-          <Sphere cx={tx} cy={ty} R={tr} body={['#d6c8ff', '#8a68e0', '#4f33a6', '#2f1d70']} />
-          <Group transform={[{ translateX: tx }, { translateY: ty - 20 }]}>
-            <Path path={svgPath(ROT_ARROW.arc)} style="stroke" strokeWidth={4.2} strokeCap="round" color="#ffffff" />
-            <Path path={svgPath(ROT_ARROW.head)} color="#ffffff" />
-          </Group>
-          <Circle cx={tx} cy={ty} r={tr * 0.87} color="#ffffff" opacity={gT} />
-        </Group>
-        {/* drop */}
-        <Group transform={auraT} origin={{ x: dx, y: dy }}>
-          <Circle cx={dx} cy={dy} r={dr + 26} opacity={aura}>
-            <RadialGradient c={vec(dx, dy)} r={dr + 26} colors={['rgba(255,70,200,0.9)', 'rgba(255,60,190,0.45)', 'rgba(255,60,190,0)']} positions={[0.62, 0.8, 1]} />
-          </Circle>
-          <Circle cx={dx} cy={dy} r={dr + 9} style="stroke" strokeWidth={3.5} color="rgba(255,120,230,0.85)" opacity={aura} />
-        </Group>
-        <Group transform={tD}>
-          <Sphere cx={dx} cy={dy} R={dr} body={['#ffb8dc', '#ff58a8', '#d41c7c', '#8c1054']} />
-          <Path path={svgPath(`M${dx - 11} ${dy - 33}L${dx + 11} ${dy - 33}L${dx} ${dy - 17}Z`)} color="#ffffff" />
-          <Circle cx={dx} cy={dy} r={dr * 0.87} color="#ffffff" opacity={gD} />
         </Group>
       </Group>
     </Canvas>
@@ -3513,18 +3419,10 @@ function HoldButton({ onPress, repeat, repeatMs = 62, delayMs = 150, style, dim,
 // v26 INPUT: one raw-touch controller per pad. Raw onTouch* events are delivered for every finger independently
 // of React Native's single-responder system, so (1) both thumbs work at once, (2) a thumb can roll from ► to ◄
 // and the direction switches instantly, (3) no Pressable can steal or cancel another finger.
-const padHit = (x, y) => {
-  const vx = x - 160;
-  const vy = y - 160;
-  const d = Math.hypot(vx, vy);
-  if (d < 22 || d > 195) return null; // centre gem = neutral
-  if (Math.abs(vx) > Math.abs(vy)) return vx < 0 ? 'l' : 'r';
-  return vy < 0 ? 'u' : 'd';
-};
 const actHit = (x, y) => {
   let best = null;
   let bd = 1;
-  for (const k of ['undo', 'turn', 'drop']) {
+  for (const k of ['undo']) {
     const [cx, cy, r] = ACT[k];
     const lim = k === 'drop' ? 1.0 : 1.2; // hard drop is destructive: no extra reach
     const d = Math.hypot(x - cx, y - cy) / (r * lim);
@@ -5082,7 +4980,7 @@ function Game() {
   const hs = width / 768; // mockup scale
   const hudH = Math.round(hs * 168);
   const RAIL = Math.round(106 * hs);
-  const dockH = DOCK ? Math.max(Math.round(320 * hs), Math.round(300 * hs)) + (BOTTOM_PAD - BOARD_BOTTOM) + 4 : 0;
+  const dockH = DOCK ? Math.round(120 * hs) + (BOTTOM_PAD - BOARD_BOTTOM) + 4 : 0;
   const cell = Math.max(
     24,
     Math.min(Math.floor((width - RAIL - 12) / COLS), Math.floor((height - STATUS_H - hudH - BOARD_BOTTOM - dockH - 8) / ROWS))
@@ -5892,9 +5790,7 @@ function Game() {
       {showCtl && (
       <>
       {(() => {
-        const padSz = Math.round(320 * hs);
-        const actSz = Math.round(300 * hs);
-        const ka = actSz / 300;
+        const actSz = Math.round(120 * hs);
         const on = G.status === 'playing';
         // taps made while the board resolves are remembered (moves/turns only) and replayed on the next piece
         const tap = (fn, buffer) => (first) => {
@@ -5904,37 +5800,14 @@ function Game() {
           }
           fn();
         };
-        const padZones = {
-          u: { fire: tap(() => rotate(1), true), press: pU },
-          l: { fire: tap(() => move(-1), true), press: pL, rep: 64 },
-          r: { fire: tap(() => move(1), true), press: pR, rep: 64 },
-          d: { fire: tap(softDrop, false), press: pD, rep: 56 },
-        };
         const actZones = {
           undo: { fire: tap(() => rotate(-1), true), press: pUndo },
-          turn: { fire: tap(() => rotate(1), true), press: pTurn },
-          drop: { fire: tap(hardDrop, false), press: pDrop },
-        };
-        const lbl = (k, txt, fs, mb) => {
-          const [cx, cy, r] = ACT[k];
-          return (
-            <Text pointerEvents="none" style={[styles.actLbl2, { position: 'absolute', left: (cx - r) * ka, width: 2 * r * ka, bottom: (300 - (cy + r - mb)) * ka, textAlign: 'center', fontSize: fs * ka }]}>
-              {txt}
-            </Text>
-          );
         };
         return (
           <>
-            <FloatPad id="L" anchor="left" locked={DOCK} bounds={{ minX: 0, maxX: width - padSz - 24, minY: -(height - padSz - 120), maxY: 0 }}>
-              <TouchZone size={padSz} units={320} hit={padHit} zones={padZones} slide style={{ width: padSz, height: padSz, opacity: on ? 0.88 : 0.5 }}>
-                <PadArt size={padSz} pu={pU} pl={pL} pr={pR} pd={pD} />
-              </TouchZone>
-            </FloatPad>
             <FloatPad id="R" anchor="right" locked={DOCK} bounds={{ minX: -(width - actSz - 24), maxX: 0, minY: -(height - actSz - 120), maxY: 0 }}>
-              <TouchZone size={actSz} units={300} hit={actHit} zones={actZones} style={{ width: actSz, height: actSz, opacity: on ? 0.9 : 0.5 }}>
-                <ActArt size={actSz} pUndo={pUndo} pTurn={pTurn} pDrop={pDrop} pulse={svPulse} />
-                {lbl('turn', 'TURN', 31, 20)}
-                {lbl('drop', 'DROP', 35, 22)}
+              <TouchZone size={actSz} units={120} hit={actHit} zones={actZones} style={{ width: actSz, height: actSz, opacity: on ? 0.9 : 0.5 }}>
+                <ActArt size={actSz} pUndo={pUndo} />
               </TouchZone>
             </FloatPad>
           </>
