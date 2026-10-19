@@ -20,7 +20,7 @@ const ROWS = 12;
 const MAX_LEVEL = 100; // campaign length: levels 1-20 handcrafted, 21-100 generated (server can override any)
 const ENDLESS_L = 901, DAILY_L = 902, EVENT_L = 903; // reserved ids, never collide with campaign levels
 const MIN_GROUP = 4;
-const COLORS = ['', '#ff3355', '#2ee86b', '#2e9bff', '#ffd21a', '#c64dff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff'];
+const COLORS = ['', '#ff3355', '#2ee86b', '#2e9bff', '#ffd21a', '#c64dff', '#6b6b8a', '#ff8a3b', '#9a9ac0', '#ffffff', '#ffe14a'];
 const GLYPHS = ['', '●', '▲', '■', '◆', '★'];
 const CHAIN_COLORS = ['','#ffd23b','#ff8a3b','#ff3b6b','#cc44ff','#ffffff','#00ffff','#00ff88'];
 const CHAIN_SIZES  = [0, 38, 44, 52, 60, 68, 76, 84]; // shapes keep colors readable for color-blind players
@@ -28,6 +28,7 @@ const ROCK = 6;
 const BOMB = 7;
 const CRACK = 8;
 const PRISM = 9;
+const ZAP = 10; // v29: made by a 5-orb pop (never in the Daily); when touched by a pop it clears its whole row
 // child offset by orientation: 0 up, 1 right, 2 down, 3 left
 const OFF = [[-1, 0], [0, 1], [1, 0], [0, -1]];
 
@@ -181,6 +182,80 @@ const LEVELS = [
 ];
 
 
+/* ============================== CHAIN TOWERS (v29) ============================== */
+// 33 authored openers. Each is a stack where ONE placement of the forced first pair sets off a chain of k.
+// Generated + proven offline with the real engine (see SESSION_NOTES). k = chain length, c = colours, p = rows top->bottom,
+// s = the forced first pair, h = [orientation, pivot column] of the winning drop.
+const TOWERS = [
+  { k: 3, c: 3, p: ['.221.2', '2333.1', '1122.1'], s: [1, 3], h: [0, 4] },
+  { k: 3, c: 3, p: ['..3...', '..3...', '..22..', '..112.', '233311'], s: [3, 2], h: [0, 1] },
+  { k: 3, c: 3, p: ['.....2', '.....1', '..2113', '..3221', '331132'], s: [2, 3], h: [3, 2] },
+  { k: 3, c: 3, p: ['...1.1', '...1.3', '...233', '...122', '.2.133'], s: [3, 2], h: [0, 4] },
+  { k: 3, c: 3, p: ['.....1', '....13', '....13', '....23', '....22', '.2.331'], s: [3, 2], h: [3, 4] },
+  { k: 3, c: 3, p: ['2.2...', '2.1...', '121222'], s: [1, 2], h: [2, 1] },
+  { k: 3, c: 4, p: ['.3....', '.4....', '12.4..', '12.3..', '13.3..', '32234.'], s: [1, 3], h: [1, 1] },
+  { k: 3, c: 4, p: ['.14...', '223...', '243...', '12343.'], s: [4, 3], h: [1, 2] },
+  { k: 3, c: 4, p: ['.3.2..', '.1.3..', '.1.3..', '.1.122', '.43312'], s: [2, 1], h: [3, 3] },
+  { k: 3, c: 4, p: ['...2..', '..33..', '..41..', '..43..', '1.12..', '1344.2'], s: [3, 1], h: [3, 2] },
+  { k: 3, c: 5, p: ['5.....', '1.325.', '4.133.', '243535', '242111'], s: [4, 2], h: [0, 1] },
+  { k: 3, c: 5, p: ['.3.5..', '.5335.', '435535', '213525'], s: [5, 3], h: [3, 5] },
+  { k: 4, c: 3, p: ['...2..', '...31.', '.2.131', '133132', '131322'], s: [1, 3], h: [2, 2] },
+  { k: 4, c: 3, p: ['...3..', '...2..', '12.2..', '32.1..', '33.2.2', '221122'], s: [3, 1], h: [3, 2] },
+  { k: 4, c: 3, p: ['....21', '..3.11', '..3.23', '232.22', '131333'], s: [1, 2], h: [0, 3] },
+  { k: 4, c: 3, p: ['.1.1..', '.2.3.3', '12.1.2', '123133', '211223'], s: [3, 2], h: [0, 4] },
+  { k: 4, c: 4, p: ['.4.11.', '.1322.', '.34214', '334413'], s: [4, 2], h: [1, 4] },
+  { k: 4, c: 4, p: ['..3.3.', '..3.4.', '..1.42', '4.1134', '3.2224'], s: [1, 3], h: [0, 3] },
+  { k: 4, c: 4, p: ['...21.', '...12.', '...32.', '..2133', '.44413'], s: [4, 1], h: [1, 1] },
+  { k: 4, c: 4, p: ['.3.2.1', '.424.2', '.44112', '122242'], s: [1, 2], h: [3, 5] },
+  { k: 4, c: 4, p: ['..4...', '..2...', '.22...', '134.4.', '343232', '443322'], s: [2, 3], h: [3, 5] },
+  { k: 4, c: 5, p: ['..4...', '..3...', '..535.', '1.1315', '431551', '214535'], s: [1, 4], h: [0, 1] },
+  { k: 4, c: 5, p: ['.....3', '.....1', '.4...3', '.1.523', '55.155', '541335'], s: [5, 1], h: [0, 2] },
+  { k: 4, c: 5, p: ['...43.', '...55.', '...14.', '..3544', '.41455', '544333'], s: [4, 5], h: [3, 5] },
+  { k: 5, c: 4, p: ['..34..', '.114..', '.1334.', '.2311.', '.3243.', '224433'], s: [3, 4], h: [0, 5] },
+  { k: 5, c: 4, p: ['...2..', '...2..', '...11.', '11.31.', '44143.', '322133'], s: [1, 4], h: [0, 2] },
+  { k: 5, c: 4, p: ['.2.1.2', '.4.223', '.2.133', '.44211', '.42123'], s: [2, 4], h: [2, 2] },
+  { k: 5, c: 5, p: ['..553.', '..2252', '..3522', '..3433', '131132'], s: [3, 1], h: [0, 1] },
+  { k: 5, c: 5, p: ['..33..', '2.443.', '2.5521', '214542', '413225'], s: [5, 2], h: [2, 1] },
+  { k: 5, c: 5, p: ['...3..', '.1.34.', '12.55.', '21.431', '244135', '253453'], s: [4, 1], h: [0, 2] },
+  { k: 6, c: 5, p: ['...1..', '..133.', '..442.', '1.524.', '55425.', '512553'], s: [3, 5], h: [1, 4] },
+  { k: 6, c: 5, p: ['.51...', '.35.1.', '.3151.', '.4131.', '.43151', '431333'], s: [1, 4], h: [2, 0] },
+  { k: 6, c: 5, p: ['...44.', '...54.', '.5.51.', '.3221.', '43512.', '443314'], s: [4, 2], h: [1, 0] },
+];
+const towerFor = (chain, maxC, idx) => {
+  for (let k = chain; k >= 3; k--) {
+    const pool = TOWERS.filter((t) => t.k === k && t.c <= maxC);
+    if (pool.length) return pool[idx % pool.length];
+  }
+  return null;
+};
+const withTower = (cfg, tw, hint) => {
+  if (!tw) return cfg;
+  cfg.pre = tw.p.slice();
+  cfg.rocks = 0; // random rocks would break the authored chain
+  cfg.seq = [tw.s.slice()];
+  cfg.c = Math.max(cfg.c, tw.c);
+  if (hint) cfg.hint = tw.h.slice();
+  return cfg;
+};
+// handcrafted campaign levels that open with a tower: [chain, tower index, beam hint?, coach]
+const AUTH = {
+  3: [3, 0, true, 'Slide the pair under the beam, then DROP'],
+  5: [3, 1, true, 'See the beam? One drop sets off a chain'],
+  7: [3, 2, true, 'Drop on the beam to reach a x3 chain'],
+  12: [4, 0, true, 'Bigger chain. Follow the beam'],
+  14: [4, 1, false, 'A x4 chain is hiding in this stack. Find it!'],
+  16: [4, 2, false, 'Look for the one drop that topples everything'],
+  18: [5, 0, false, 'A x5 opener. Think it through'],
+};
+const authored = (L, base) => {
+  const a = AUTH[L];
+  if (!a || !base || base.pre) return base;
+  const cfg = { ...base };
+  withTower(cfg, towerFor(a[0], cfg.c, a[1]), a[2]);
+  cfg.coach = a[3];
+  return cfg;
+};
+
 /* ============================== CAMPAIGN 21-100 + REMOTE CONFIG (v23) ============================== */
 const BOSS_NAMES = ['Mossback', 'Tide Titan', 'Frost Warden', 'Neon Queen', 'Gloom Weaver', 'Storm Kraken', 'Ice Colossus', 'Glitch King'];
 const GEN_CACHE = {};
@@ -221,6 +296,14 @@ function genLevel(n) {
     cfg.rocks = 3 + Math.floor(d * 6);
   }
   if (boss) cfg.coach = `BOSS: ${BOSS_NAMES[(n / 10 - 3) % BOSS_NAMES.length]}`;
+  // v29: chain levels start from a tower; every third other level opens with a smaller one
+  if (t === 'chain') {
+    withTower(cfg, towerFor(Math.min(6, cfg.g), cfg.c, n), false);
+    cfg.coach = 'A big chain is hiding in this stack';
+  } else if (!cfg.pre && !boss && n % 3 === 1) {
+    withTower(cfg, towerFor(3 + (n % 2), cfg.c, n), false);
+    cfg.coach = 'OPENER: find the drop that pops the tower';
+  }
   GEN_CACHE[n] = cfg;
   return cfg;
 }
@@ -280,11 +363,11 @@ const cfgOf = (L) => {
     const ev = activeEvent();
     return ev ? { ...ev.cfg, coach: ev.cfg.coach || ev.title } : LEVELS[0];
   }
-  return REMOTE.levels[L] || (L <= 20 ? LEVELS[L - 1] : genLevel(L));
+  return REMOTE.levels[L] || (L <= 20 ? authored(L, LEVELS[L - 1]) : genLevel(L));
 };
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v27';
+const VERSION = 'v30';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -309,6 +392,76 @@ const dateSeed = () => Number(dateKey().replace(/-/g, ''));
 
 // ad pacing: one place to tune. Never two interstitials within 2 minutes.
 let lastAdAt = 0;
+// v30 ADS (Google AdMob). The module is optional: without it, or if no ad is loaded, the old 3-second countdown runs instead.
+// Until you paste real unit ids into AD_UNITS, Google's TEST ads are used (safe, but they earn nothing).
+let Ads = null;
+try {
+  Ads = require('react-native-google-mobile-ads');
+} catch (e) {}
+const AD_UNITS = { rewarded: '', interstitial: '' }; // e.g. 'ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY'
+const adState = { ready: false, rewarded: null, interstitial: null, rewardedLoaded: false, interstitialLoaded: false };
+const adUnit = (k) => AD_UNITS[k] || (Ads && Ads.TestIds ? (k === 'rewarded' ? Ads.TestIds.REWARDED : Ads.TestIds.INTERSTITIAL) : '');
+const loadAd = (k) => {
+  if (!Ads || !adState.ready) return;
+  try {
+    const rw = k === 'rewarded';
+    const ad = (rw ? Ads.RewardedAd : Ads.InterstitialAd).createForAdRequest(adUnit(k));
+    adState[k] = ad;
+    adState[k + 'Loaded'] = false;
+    ad.addAdEventListener(rw ? Ads.RewardedAdEventType.LOADED : Ads.AdEventType.LOADED, () => {
+      adState[k + 'Loaded'] = true;
+    });
+    ad.addAdEventListener(Ads.AdEventType.ERROR, () => {
+      adState[k + 'Loaded'] = false;
+      setTimeout(() => loadAd(k), 30000); // no fill / offline: try again in 30s
+    });
+    ad.load();
+  } catch (e) {}
+};
+const initAds = async () => {
+  if (!Ads || adState.ready) return;
+  try {
+    // GDPR / UK / US-state consent form, shown only where the law requires it
+    if (Ads.AdsConsent && Ads.AdsConsent.gatherConsent) await Ads.AdsConsent.gatherConsent();
+  } catch (e) {}
+  try {
+    await Ads.default().initialize();
+    adState.ready = true;
+    loadAd('rewarded');
+    loadAd('interstitial');
+  } catch (e) {}
+};
+// returns true if a real ad was shown. rewarded: onDone only if the reward was earned, otherwise onSkip.
+const presentAd = (k, onDone, onSkip) => {
+  const ad = adState[k];
+  if (!Ads || !ad || !adState[k + 'Loaded']) return false;
+  const rw = k === 'rewarded';
+  let earned = false;
+  const offs = [];
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    offs.forEach((f) => {
+      try {
+        f();
+      } catch (e) {}
+    });
+    if (!rw || earned) onDone();
+    else onSkip();
+    loadAd(k);
+  };
+  try {
+    offs.push(ad.addAdEventListener(Ads.AdEventType.CLOSED, finish));
+    offs.push(ad.addAdEventListener(Ads.AdEventType.ERROR, finish));
+    if (rw) offs.push(ad.addAdEventListener(Ads.RewardedAdEventType.EARNED_REWARD, () => { earned = true; }));
+    adState[k + 'Loaded'] = false;
+    ad.show();
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
 const adDue = (L) => L < 900 && (L === 6 || L === 9 || (L >= 12 && L % 2 === 0)) && Date.now() - lastAdAt > 120000;
 
 const CHEST_SHARDS = 1; // daily chest reward: flat on purpose (shards only buy cosmetic skins)
@@ -1100,7 +1253,7 @@ const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, act
   const fill = popping ? '#ffffff' : sk === 'ring' ? 'rgba(10,10,20,0.6)' : color === BOMB ? '#2a1408' : base;
   const edge =
     color === CRACK ? '#e0e0ff' : color === PRISM ? '#ff3bd4' : sk === 'ring' ? base
-    : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : nice ? darken(base, 0.55) : 'rgba(0,0,0,0.5)';
+    : sk === 'candy' ? 'rgba(255,255,255,0.75)' : color === BOMB ? '#ff8a3b' : color === ZAP ? '#fff3a0' : nice ? darken(base, 0.55) : 'rgba(0,0,0,0.5)';
   const body = rrPath(pad, pad, w, w, rad);
   const ring = rrPath(pad + bw / 2, pad + bw / 2, w - bw, w - bw, rad.map((r) => Math.max(0, r - bw / 2)));
   const ox = pad + bw;
@@ -1170,6 +1323,12 @@ const OrbSk = React.memo(function OrbSk({ color, size, x, y, popping, worry, act
             <Path path={svgPath(`M${mx} ${my}L${mx + mw} ${my}A${mw / 2} ${mh} 0 0 1 ${mx} ${my}Z`)} color="rgba(255,120,140,0.9)" />
             <Path path={svgPath(`M${mx} ${my}A${mw / 2} ${mh} 0 0 0 ${mx + mw} ${my}`)} style="stroke" strokeWidth={s * 0.04} color="#14142a" />
           </>
+        )}
+        {color === ZAP && !popping && (
+          <Group transform={[{ translateX: ox + iw / 2 }, { translateY: ox + iw / 2 }, { scale: iw }]}>
+            <Path path={svgPath('M0.08 -0.5L-0.3 0.06L-0.04 0.06L-0.12 0.5L0.3 -0.1L0.04 -0.1Z')} color="#7a3a00" />
+            <Path path={svgPath('M0.08 -0.5L-0.3 0.06L-0.04 0.06L-0.12 0.5L0.3 -0.1L0.04 -0.1Z')} style="stroke" strokeWidth={0.035} strokeJoin="round" color="#fff3a0" />
+          </Group>
         )}
         {showGlyph && (
           <Group transform={[{ translateX: ox + iw / 2 }, { translateY: gy }, ...(gemLike ? [{ rotate: -Math.PI / 4 }] : []), { scale: gs }]}>
@@ -1615,21 +1774,15 @@ const PadArt = React.memo(function PadArt({ size, pu, pl, pr, pd }) {
   return (
     <Canvas pointerEvents="none" style={{ width: size, height: size }}>
       <Group transform={[{ scale: k }]}>
-        <Circle cx={160} cy={165} r={152} color="rgba(0,0,0,0.38)" />
-        <Circle cx={160} cy={160} r={152}>
-          <LinearGradient start={vec(20, 10)} end={vec(300, 310)} colors={GOLD} />
+        <Circle cx={160} cy={166} r={150} color="rgba(0,0,0,0.18)" />
+        <Circle cx={160} cy={160} r={150}>
+          <RadialGradient c={vec(120, 105)} r={230} colors={['rgba(210,200,255,0.20)', 'rgba(120,100,220,0.14)', 'rgba(255,255,255,0.10)']} positions={[0, 0.7, 1]} />
         </Circle>
-        <Circle cx={160} cy={160} r={138} color="#4a2c0e" />
-        <Circle cx={160} cy={160} r={134}>
-          <RadialGradient c={vec(130, 120)} r={200} colors={['#8a5ad0', '#5a339c', '#2e1a62', '#1f1048']} positions={[0, 0.4, 0.8, 1]} />
-        </Circle>
-        <Circle cx={160} cy={160} r={104} style="stroke" strokeWidth={2.5} color="rgba(246,207,116,0.55)" />
-        <Path path={svgPath('M160 40L176 144L280 160L176 176L160 280L144 176L40 160L144 144Z')} color="rgba(190,150,255,0.22)" />
-        <Path path={svgPath('M160 40L176 144L280 160L176 176L160 280L144 176L40 160L144 144Z')} style="stroke" strokeWidth={2} color="rgba(246,207,116,0.5)" />
-        <Gem cx={160} cy={17} r={12} c="#c9a0ff" />
-        <Gem cx={303} cy={160} r={12} c="#c9a0ff" />
-        <Gem cx={160} cy={303} r={12} c="#c9a0ff" />
-        <Gem cx={17} cy={160} r={12} c="#c9a0ff" />
+        <Circle cx={160} cy={160} r={104} color="rgba(40,22,100,0.34)" />
+        <Circle cx={160} cy={160} r={149} style="stroke" strokeWidth={5} color="rgba(235,226,255,0.55)" />
+        <Circle cx={160} cy={160} r={136} style="stroke" strokeWidth={2} color="rgba(255,255,255,0.16)" />
+        <Path path={svgPath('M52 110A120 120 0 0 1 150 38')} style="stroke" strokeWidth={6} strokeCap="round" color="rgba(255,255,255,0.45)" />
+        <Path path={svgPath('M160 40L176 144L280 160L176 176L160 280L144 176L40 160L144 144Z')} style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.18)" />
         {PAD_BTNS.map((b) => (
           <PadBtn key={b.k} cx={160 + b.dx} cy={160 + b.dy} rot={b.rot} press={P[b.k]} />
         ))}
@@ -1671,7 +1824,7 @@ const ActArt = React.memo(function ActArt({ size, pUndo, pTurn, pDrop, pulse }) 
       <Group transform={[{ scale: k }]}>
         {/* undo */}
         <Group transform={tU}>
-          <Sphere cx={ux} cy={uy} R={ur} body={['#cfa4ec', '#8a58b8', '#4a2a78']} />
+          <Sphere cx={ux} cy={uy} R={ur} body={['#e0b27a', '#a56a3e', '#5e3522']} />
           <Group transform={[{ translateX: ux }, { translateY: uy + 2 }, { scaleX: -1 }]}>
             <Path path={svgPath(ROT_ARROW.arc)} style="stroke" strokeWidth={5} strokeCap="round" color="#fff1cf" />
             <Path path={svgPath(ROT_ARROW.head)} color="#fff1cf" />
@@ -1680,7 +1833,7 @@ const ActArt = React.memo(function ActArt({ size, pUndo, pTurn, pDrop, pulse }) 
         </Group>
         {/* turn */}
         <Group transform={tT}>
-          <Sphere cx={tx} cy={ty} R={tr} body={['#a9f6f2', '#3fb5bd', '#1d6d86', '#124a63']} />
+          <Sphere cx={tx} cy={ty} R={tr} body={['#d6c8ff', '#8a68e0', '#4f33a6', '#2f1d70']} />
           <Group transform={[{ translateX: tx }, { translateY: ty - 20 }]}>
             <Path path={svgPath(ROT_ARROW.arc)} style="stroke" strokeWidth={4.2} strokeCap="round" color="#ffffff" />
             <Path path={svgPath(ROT_ARROW.head)} color="#ffffff" />
@@ -1695,7 +1848,7 @@ const ActArt = React.memo(function ActArt({ size, pUndo, pTurn, pDrop, pulse }) 
           <Circle cx={dx} cy={dy} r={dr + 9} style="stroke" strokeWidth={3.5} color="rgba(255,120,230,0.85)" opacity={aura} />
         </Group>
         <Group transform={tD}>
-          <Sphere cx={dx} cy={dy} R={dr} body={['#ffa89a', '#ff3b3b', '#c4121e', '#780a14']} />
+          <Sphere cx={dx} cy={dy} R={dr} body={['#ffb8dc', '#ff58a8', '#d41c7c', '#8c1054']} />
           <Path path={svgPath(`M${dx - 11} ${dy - 33}L${dx + 11} ${dy - 33}L${dx} ${dy - 17}Z`)} color="#ffffff" />
           <Circle cx={dx} cy={dy} r={dr * 0.87} color="#ffffff" opacity={gD} />
         </Group>
@@ -1945,103 +2098,396 @@ function SpinRing({ cx, cy, r, color, clock, dir, dash }) {
   );
 }
 
-const ForestScene = React.memo(function ForestScene({ W, H, clock }) {
+/* ============================== V28 JUNGLE LAYERS (Skia) ============================== */
+// leaf: pointing right from (0,0), length len
+const leafD = (len, w) => `M0 0Q${len * 0.45} ${-w} ${len} 0Q${len * 0.45} ${w * 0.45} 0 0Z`;
+const LEAF_D = leafD(100, 17);
+const VEIN_D = 'M4 0L92 -1';
+
+// a fan of leaves from one pivot (palm / monstera crown). angles in radians (0 = right, negative = up)
+function Crown({ x, y, sc, angles, dark, rim, clock, k, amp = 0.025 }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    return [{ rotate: amp * Math.sin((clock.value * k) * Math.PI * 2) }];
+  });
+  return (
+    <Group transform={tf} origin={{ x, y }}>
+      <Group transform={[{ translateX: x }, { translateY: y }, { scale: sc }]}>
+        {angles.map((a, i) => (
+          <Group key={i} transform={[{ rotate: a }, { scale: 0.85 + (i % 3) * 0.1 }]}>
+            <Path path={svgPath(LEAF_D)}>
+              <LinearGradient start={vec(0, 0)} end={vec(100, 0)} colors={[dark, rim]} />
+            </Path>
+            <Path path={svgPath(VEIN_D)} style="stroke" strokeWidth={1.6} color="rgba(120,255,210,0.35)" />
+          </Group>
+        ))}
+      </Group>
+    </Group>
+  );
+}
+
+function Vine({ x, len, drift, clock, k, ph }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    return [{ rotate: 0.035 * Math.sin((clock.value * k + ph) * Math.PI * 2) }];
+  });
+  const d = `M${x} -4C${x + drift * 0.9} ${len * 0.3} ${x - drift * 0.7} ${len * 0.62} ${x + drift * 0.3} ${len}`;
+  return (
+    <Group transform={tf} origin={{ x, y: 0 }}>
+      <Path path={svgPath(d)} style="stroke" strokeWidth={3.2} strokeCap="round" color="rgba(10,70,52,0.9)" />
+      <Path path={svgPath(d)} style="stroke" strokeWidth={1.2} strokeCap="round" color="rgba(90,230,170,0.45)" />
+      {[0.3, 0.5, 0.7, 0.9].map((t, i) => (
+        <Group key={i} transform={[{ translateX: x + drift * (0.3 + 0.2 * Math.sin(t * 6 + ph)) }, { translateY: len * t }, { rotate: i % 2 ? 0.9 : 2.2 }, { scale: 0.22 }]}>
+          <Path path={svgPath(LEAF_D)} color="rgba(24,120,92,0.85)" />
+        </Group>
+      ))}
+    </Group>
+  );
+}
+
+function Flower({ x, y, r, c, clock, k, ph }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.55 + 0.45 * Math.sin((clock.value * k + ph) * Math.PI * 2);
+  });
+  return (
+    <>
+      <Group opacity={op}>
+        <Circle cx={x} cy={y} r={r * 2.6}>
+          <RadialGradient c={vec(x, y)} r={r * 2.6} colors={[rgba(c, 0.5), rgba(c, 0)]} />
+        </Circle>
+      </Group>
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <Group key={i} transform={[{ translateX: x }, { translateY: y }, { rotate: (i / 6) * Math.PI * 2 }]}>
+          <Oval x={r * 0.1} y={-r * 0.32} width={r * 1.15} height={r * 0.64} color={rgba(c, 0.88)} />
+        </Group>
+      ))}
+      <Circle cx={x} cy={y} r={r * 0.34} color="#fff6c8" />
+    </>
+  );
+}
+
+function Rays({ W, H, clock, ray }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.5 + 0.5 * Math.sin(clock.value * Math.PI * 2 * 3);
+  });
+  return (
+    <Group opacity={op}>
+      {[[0.1, 0.18], [0.34, 0.14], [0.62, 0.2], [0.86, 0.13]].map(([fx, fw], i) => (
+        <Path key={i} path={svgPath(`M${W * fx} 0L${W * (fx + fw)} 0L${W * (fx + fw + 0.2)} ${H * 0.62}L${W * (fx - 0.04)} ${H * 0.62}Z`)}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H * 0.62)} colors={[`rgba(${ray},0.14)`, `rgba(${ray},0)`]} />
+        </Path>
+      ))}
+    </Group>
+  );
+}
+
+function Mist({ W, H, y, clock, k, ph, a, mist }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    return [{ translateX: W * 0.12 * Math.sin((clock.value * k + ph) * Math.PI * 2) }];
+  });
+  return (
+    <Group transform={tf}>
+      <Oval x={-W * 0.2} y={y} width={W * 1.4} height={H * 0.07}>
+        <LinearGradient start={vec(0, y)} end={vec(0, y + H * 0.07)} colors={[`rgba(${mist},0)`, `rgba(${mist},${a})`, `rgba(${mist},0)`]} />
+      </Oval>
+    </Group>
+  );
+}
+
+const rad = (d) => (d * Math.PI) / 180;
+const JungleBack = React.memo(function JungleBack({ W, H, clock, pal }) {
+  const S = W / 411;
+  return (
+    <>
+      <Rays W={W} H={H} clock={clock} ray={pal.ray} />
+      <Crown x={-8 * S} y={H * 0.03} sc={2.4 * S} angles={[rad(-5), rad(10), rad(26), rad(42), rad(58), rad(72)]} dark={pal.l1[0]} rim={pal.l1[1]} clock={clock} k={2} />
+      <Crown x={W + 8 * S} y={H * 0.05} sc={2.4 * S} angles={[rad(185), rad(170), rad(154), rad(138), rad(122), rad(108)]} dark={pal.l1[0]} rim={pal.l1[1]} clock={clock} k={3} />
+      <Crown x={W * 0.18} y={-6} sc={1.5 * S} angles={[rad(40), rad(62), rad(84), rad(106), rad(128)]} dark={pal.l2[0]} rim={pal.l2[1]} clock={clock} k={4} amp={0.03} />
+      <Crown x={W * 0.78} y={-6} sc={1.7 * S} angles={[rad(52), rad(74), rad(96), rad(118), rad(140)]} dark={pal.l2[0]} rim={pal.l2[1]} clock={clock} k={5} amp={0.03} />
+      <Vine x={W * 0.3} len={H * 0.2} drift={22 * S} clock={clock} k={2} ph={0.1} />
+      <Vine x={W * 0.52} len={H * 0.15} drift={-18 * S} clock={clock} k={3} ph={0.4} />
+      <Vine x={W * 0.66} len={H * 0.24} drift={26 * S} clock={clock} k={2} ph={0.7} />
+      <Vine x={W * 0.9} len={H * 0.17} drift={-20 * S} clock={clock} k={3} ph={0.2} />
+    </>
+  );
+});
+const JungleFront = React.memo(function JungleFront({ W, H, clock, pal }) {
+  const S = W / 411;
+  return (
+    <>
+      <Mist W={W} H={H} y={H * 0.74} clock={clock} k={1} ph={0.2} a={0.16} mist={pal.mist} />
+      <Mist W={W} H={H} y={H * 0.84} clock={clock} k={2} ph={0.6} a={0.2} mist={pal.mist} />
+      <Flower x={W * 0.12} y={H * 0.9} r={15 * S} c={pal.fl[0]} clock={clock} k={4} ph={0.1} />
+      <Flower x={W * 0.2} y={H * 0.945} r={11 * S} c={pal.fl[1]} clock={clock} k={5} ph={0.5} />
+      <Flower x={W * 0.7} y={H * 0.93} r={13 * S} c={pal.fl[2]} clock={clock} k={4} ph={0.8} />
+      <Flower x={W * 0.9} y={H * 0.885} r={17 * S} c={pal.fl[3]} clock={clock} k={3} ph={0.3} />
+      <Flower x={W * 0.56} y={H * 0.965} r={10 * S} c={pal.fl[4]} clock={clock} k={5} ph={0.6} />
+      <Crown x={-6 * S} y={H * 1.0} sc={2.0 * S} angles={[rad(-80), rad(-62), rad(-44), rad(-26), rad(-8)]} dark={pal.l3[0]} rim={pal.l3[1]} clock={clock} k={2} amp={0.02} />
+      <Crown x={W + 6 * S} y={H * 1.0} sc={2.0 * S} angles={[rad(-100), rad(-118), rad(-136), rad(-154), rad(-172)]} dark={pal.l3[0]} rim={pal.l3[1]} clock={clock} k={3} amp={0.02} />
+    </>
+  );
+});
+
+
+function HintBeam({ left, width, cell, H, pulse }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.45 + 0.55 * pulse.value;
+  });
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left, top: 0, width, height: H }}>
+      <Group opacity={op}>
+        <Rect x={0} y={0} width={width} height={H}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={['rgba(255,226,120,0)', 'rgba(255,226,120,0.2)', 'rgba(255,226,120,0.42)']} />
+        </Rect>
+        <Rect x={0} y={0} width={2} height={H} color="rgba(255,236,150,0.8)" />
+        <Rect x={width - 2} y={0} width={2} height={H} color="rgba(255,236,150,0.8)" />
+        {[0.5, 0.64, 0.78].map((f, i) => (
+          <Path key={i} path={svgPath(`M${width / 2 - cell * 0.28} ${H * f}L${width / 2} ${H * f + cell * 0.22}L${width / 2 + cell * 0.28} ${H * f}`)} style="stroke" strokeWidth={4} strokeCap="round" strokeJoin="round" color="#ffe88a" />
+        ))}
+      </Group>
+    </Canvas>
+  );
+}
+
+/* ============================== V29 BIOMES ============================== */
+// 8 palettes = 4 realms x 2 moods. Each game also gets a random mirror + seed, so no two games look the same.
+// The world cools as you progress: realm 0 (violet grove) -> 1 (moonlit lake) -> 2 (frost) -> 3 (neon night),
+// and inside a game a cool tint rises with your goal progress.
+const PALS = [
+  { n: 'Twilight Grove', sky: ['#0b0f40', '#1c1670', '#2b1b82', '#17428c', '#0f5c78', '#0a4048', '#06282c'], neb: ['rgba(255,90,210,0.4)', 'rgba(170,70,255,0.2)'], neb2: ['rgba(90,230,255,0.3)', 'rgba(80,120,255,0.15)'], ground: ['#14604a', '#0b4036', '#062a2c'], l1: ['#04251f', '#13806a'], l2: ['#03201b', '#0f6e5c'], l3: ['#021a16', '#0d5a4a'], fern: '#5ef0d0', m1: ['#ffb0e8', '#a45ad8', '#ff7ad9'], m2: ['#ffd08a', '#e08a3a', '#ffb04a'], fl: ['#ff7ad9', '#7ff3e0', '#ffd86b', '#ff7ad9', '#8ab4ff'], flies: ['#ffe98a', '#ff9a3b', '#7ff3e0', '#ff7ad9'], ray: '150,255,230', mist: '160,255,230', row: '#0a3a4a', ring: ['#5cd8ff', '#ff7a4a'], tint: '90,190,255' },
+  { n: 'Emerald Canopy', sky: ['#04140f', '#08271d', '#0d3d2c', '#0f5a3e', '#0c6b4a', '#084a38', '#052b24'], neb: ['rgba(120,255,160,0.35)', 'rgba(40,200,120,0.18)'], neb2: ['rgba(255,230,120,0.22)', 'rgba(120,255,200,0.12)'], ground: ['#17713f', '#0d4a2c', '#06301e'], l1: ['#021d12', '#17a35e'], l2: ['#021a10', '#128a4e'], l3: ['#01140c', '#0e6f3e'], fern: '#7dffa6', m1: ['#fff0a0', '#ff9a4a', '#ffb04a'], m2: ['#ffc0e8', '#c060e0', '#ff7ad9'], fl: ['#ffe36b', '#ff9a4a', '#7dffd0', '#ff7a9a', '#ffe36b'], flies: ['#fff08a', '#9dff7a', '#7dffd0', '#ffb04a'], ray: '200,255,170', mist: '170,255,200', row: '#0a4a2c', ring: ['#9dff7a', '#ffb04a'], tint: '120,255,190' },
+  { n: 'Moonlit Lake', sky: ['#050a2a', '#0b1850', '#12296e', '#1a4a8f', '#1d6aa0', '#134a78', '#0a2a4a'], neb: ['rgba(150,190,255,0.35)', 'rgba(110,120,255,0.18)'], neb2: ['rgba(200,230,255,0.3)', 'rgba(120,170,255,0.15)'], ground: ['#1d5f9a', '#124878', '#0a2c52'], l1: ['#031a2c', '#2a86b8'], l2: ['#021626', '#22729c'], l3: ['#01101c', '#1a5a7c'], fern: '#8fd8ff', m1: ['#cfe6ff', '#7a8fe0', '#9fc8ff'], m2: ['#e8f4ff', '#8aa4e8', '#bcd8ff'], fl: ['#cfe6ff', '#9fd0ff', '#ffffff', '#a0b4ff', '#cfe6ff'], flies: ['#dff0ff', '#9fd0ff', '#ffffff', '#b8c8ff'], ray: '180,220,255', mist: '190,225,255', row: '#0a2e4e', ring: ['#9fd8ff', '#c8b8ff'], tint: '110,180,255' },
+  { n: 'Aqua Glade', sky: ['#04141f', '#08293a', '#0d4358', '#106a78', '#12868a', '#0b5f68', '#06393f'], neb: ['rgba(90,255,230,0.3)', 'rgba(60,180,255,0.16)'], neb2: ['rgba(200,255,240,0.25)', 'rgba(120,230,255,0.12)'], ground: ['#17808a', '#0e5a68', '#073a46'], l1: ['#03222a', '#22a4a4'], l2: ['#021c22', '#1a8c8e'], l3: ['#01141a', '#147072'], fern: '#7ff3e8', m1: ['#d0fff4', '#5ac8d8', '#7ff3e8'], m2: ['#fff0c8', '#ffb88a', '#ffd08a'], fl: ['#7ff3e8', '#ffd86b', '#ff9ad8', '#9fd0ff', '#7ff3e8'], flies: ['#d0fff4', '#7ff3e8', '#ffe98a', '#ffffff'], ray: '170,255,240', mist: '180,255,240', row: '#0a4a54', ring: ['#7ff3e8', '#ffd08a'], tint: '100,230,230' },
+  { n: 'Frost Peaks', sky: ['#0b1236', '#1a2a6e', '#2c4a98', '#4f7cc0', '#7fa8d8', '#4a7098', '#243e5e'], neb: ['rgba(170,220,255,0.35)', 'rgba(120,160,255,0.18)'], neb2: ['rgba(230,245,255,0.3)', 'rgba(170,210,255,0.15)'], ground: ['#8ab4d8', '#5a88b0', '#2f5578'], l1: ['#0a1c34', '#6aa6d8'], l2: ['#08162c', '#5a90c0'], l3: ['#051020', '#4a78a4'], fern: '#d0eaff', m1: ['#eaf6ff', '#8ab0e8', '#cfe6ff'], m2: ['#ffffff', '#a8c4f0', '#e0f0ff'], fl: ['#ffffff', '#bfe0ff', '#e8d8ff', '#9fd0ff', '#ffffff'], flies: ['#ffffff', '#cfe6ff', '#e8d8ff', '#bfe0ff'], ray: '210,235,255', mist: '220,240,255', row: '#244a74', ring: ['#cfe6ff', '#b8c8ff'], tint: '150,210,255' },
+  { n: 'Aurora Ridge', sky: ['#070a28', '#14185a', '#2a1a7a', '#3a4aa0', '#4f8ac0', '#3a6a8f', '#1d3a52'], neb: ['rgba(120,255,200,0.3)', 'rgba(160,120,255,0.2)'], neb2: ['rgba(255,150,230,0.25)', 'rgba(150,170,255,0.14)'], ground: ['#6aa0c8', '#42709c', '#223c60'], l1: ['#0a1430', '#5a8ad0'], l2: ['#08102a', '#4a76b8'], l3: ['#050a1c', '#3a5c94'], fern: '#b8f0ff', m1: ['#e8d8ff', '#9a7ae0', '#c8a8ff'], m2: ['#d8fff0', '#7ad8c0', '#a8ffe0'], fl: ['#c8a8ff', '#7affd0', '#ffffff', '#ff9ad8', '#c8a8ff'], flies: ['#e8d8ff', '#a8ffe0', '#ffffff', '#c8a8ff'], ray: '170,255,220', mist: '190,240,255', row: '#1c3a68', ring: ['#a8ffe0', '#c8a8ff'], tint: '130,200,255' },
+  { n: 'Neon Night', sky: ['#0a0220', '#1c0540', '#3a0a6a', '#6a1a8a', '#8a2a8a', '#4a1a5a', '#240a34'], neb: ['rgba(255,60,200,0.4)', 'rgba(150,60,255,0.22)'], neb2: ['rgba(0,240,255,0.3)', 'rgba(60,120,255,0.16)'], ground: ['#3a1060', '#240a46', '#140628'], l1: ['#12041f', '#c02a9a'], l2: ['#0e031a', '#9a2088'], l3: ['#080212', '#701870'], fern: '#ff7ae0', m1: ['#ff9af0', '#8a3ae0', '#ff3ad0'], m2: ['#9afff8', '#3a8ae0', '#00f0ff'], fl: ['#00f0ff', '#ff3ad0', '#ffe23a', '#00f0ff', '#ff3ad0'], flies: ['#00f0ff', '#ff3ad0', '#ffe23a', '#7aff9a'], ray: '255,120,230', mist: '255,140,230', row: '#3a0a5a', ring: ['#00f0ff', '#ff3ad0'], tint: '0,200,255' },
+  { n: 'Cyber Reef', sky: ['#020a22', '#041a46', '#062c6e', '#0a4a9a', '#0a6aaa', '#06406a', '#031e34'], neb: ['rgba(0,230,255,0.35)', 'rgba(60,140,255,0.2)'], neb2: ['rgba(255,60,200,0.28)', 'rgba(150,80,255,0.15)'], ground: ['#0e4a8a', '#08305e', '#041a34'], l1: ['#021428', '#1a9ad8'], l2: ['#010f20', '#1580b8'], l3: ['#010a16', '#0e6090'], fern: '#5ae8ff', m1: ['#9af8ff', '#3a7ae0', '#00e0ff'], m2: ['#ffa0f0', '#a03ae0', '#ff3ad0'], fl: ['#00e0ff', '#ff3ad0', '#ffe23a', '#7aff9a', '#00e0ff'], flies: ['#00e0ff', '#ff3ad0', '#7aff9a', '#ffe23a'], ray: '120,230,255', mist: '140,230,255', row: '#0a3a6a', ring: ['#00e0ff', '#ff3ad0'], tint: '0,170,255' },
+];
+
+function Moon({ W, H, clock }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.8 + 0.2 * Math.sin(clock.value * Math.PI * 2 * 2);
+  });
+  const x = W * 0.74;
+  const y = H * 0.17;
+  const r = W * 0.1;
+  return (
+    <Group opacity={op}>
+      <Circle cx={x} cy={y} r={r * 3.2}>
+        <RadialGradient c={vec(x, y)} r={r * 3.2} colors={['rgba(210,230,255,0.45)', 'rgba(210,230,255,0)']} />
+      </Circle>
+      <Circle cx={x} cy={y} r={r}>
+        <RadialGradient c={vec(x - r * 0.3, y - r * 0.3)} r={r * 1.3} colors={['#ffffff', '#e4eeff', '#b8ccf0']} />
+      </Circle>
+      <Circle cx={x + r * 0.3} cy={y + r * 0.2} r={r * 0.2} color="rgba(120,140,190,0.2)" />
+      <Circle cx={x - r * 0.3} cy={y + r * 0.35} r={r * 0.13} color="rgba(120,140,190,0.18)" />
+    </Group>
+  );
+}
+function Ripples({ W, H, clock }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.35 + 0.35 * Math.sin(clock.value * Math.PI * 2 * 6);
+  });
+  return (
+    <Group opacity={op}>
+      {[[0.3, 0.88, 0.22], [0.62, 0.92, 0.28], [0.18, 0.96, 0.18], [0.78, 0.86, 0.16]].map(([fx, fy, fw], i) => (
+        <Oval key={i} x={W * (fx - fw / 2)} y={H * fy} width={W * fw} height={H * 0.012} color="rgba(220,240,255,0.5)" />
+      ))}
+    </Group>
+  );
+}
+function Snow({ W, H, clock }) {
+  const flakes = useMemo(() => Array.from({ length: 70 }, (_, i) => ({ x: _h(i + 900) * W, y: _h(i + 950) * H, a: 4 + _h(i + 990) * 10, k: 3 + (i % 3), m: 1 + (i % 3), p: _h(i + 1000) * 6.28 })), [W, H]);
+  const pts = useDerivedValue(() => {
+    'worklet';
+    const t = clock.value;
+    return flakes.map((f) => ({ x: f.x + f.a * Math.sin(t * Math.PI * 2 * f.k + f.p), y: (f.y + t * H * f.m * 2) % H }));
+  });
+  return (
+    <>
+      <Points points={pts} mode="points" style="stroke" strokeWidth={5} strokeCap="round" color="rgba(255,255,255,0.28)" />
+      <Points points={pts} mode="points" style="stroke" strokeWidth={2.4} strokeCap="round" color="#ffffff" />
+    </>
+  );
+}
+function Aurora({ W, H, clock }) {
+  const o1 = useDerivedValue(() => {
+    'worklet';
+    return 0.4 + 0.4 * Math.sin(clock.value * Math.PI * 2 * 2);
+  });
+  const o2 = useDerivedValue(() => {
+    'worklet';
+    return 0.35 + 0.35 * Math.sin(clock.value * Math.PI * 2 * 3 + 1.3);
+  });
+  const band = (y0, a, c1, c2) =>
+    `M0 ${y0}C${W * 0.25} ${y0 - H * a} ${W * 0.5} ${y0 + H * a} ${W} ${y0 - H * a * 0.5}L${W} ${y0 + H * 0.14}C${W * 0.6} ${y0 + H * (0.14 + a)} ${W * 0.3} ${y0 + H * (0.14 - a)} 0 ${y0 + H * 0.14}Z`;
+  return (
+    <>
+      <Group opacity={o1}>
+        <Path path={svgPath(band(H * 0.1, 0.05, 0, 0))}>
+          <LinearGradient start={vec(0, H * 0.1)} end={vec(0, H * 0.28)} colors={['rgba(120,255,200,0.4)', 'rgba(120,255,200,0)']} />
+        </Path>
+      </Group>
+      <Group opacity={o2}>
+        <Path path={svgPath(band(H * 0.18, 0.04, 0, 0))}>
+          <LinearGradient start={vec(0, H * 0.18)} end={vec(0, H * 0.34)} colors={['rgba(190,140,255,0.35)', 'rgba(190,140,255,0)']} />
+        </Path>
+      </Group>
+    </>
+  );
+}
+function IceSpikes({ W, H }) {
+  return (
+    <>
+      {[[0.05, 0.9, 0.05, 0.1], [0.12, 0.93, 0.04, 0.07], [0.9, 0.9, 0.06, 0.12], [0.84, 0.94, 0.04, 0.07], [0.5, 0.98, 0.05, 0.05]].map(([fx, fy, fw, fh], i) => (
+        <Path key={i} path={svgPath(`M${W * (fx - fw / 2)} ${H * fy}L${W * fx} ${H * (fy - fh)}L${W * (fx + fw / 2)} ${H * fy}Z`)}>
+          <LinearGradient start={vec(W * fx, H * (fy - fh))} end={vec(W * fx, H * fy)} colors={['rgba(255,255,255,0.9)', 'rgba(150,210,255,0.55)']} />
+        </Path>
+      ))}
+    </>
+  );
+}
+function NeonGrid({ W, H, clock }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.6 + 0.4 * Math.sin(clock.value * Math.PI * 2 * 4);
+  });
+  const hy = H * 0.84;
+  let d = '';
+  for (let i = -8; i <= 8; i++) d += `M${W / 2} ${hy}L${W / 2 + i * W * 0.28} ${H}`;
+  for (let k = 1; k <= 7; k++) {
+    const y = hy + (H - hy) * (k / 7) ** 2;
+    d += `M0 ${y}L${W} ${y}`;
+  }
+  return (
+    <>
+      <Circle cx={W / 2} cy={hy - H * 0.01} r={W * 0.16}>
+        <LinearGradient start={vec(0, hy - W * 0.17)} end={vec(0, hy)} colors={['#ffe23a', '#ff6ad0', '#8a2aff']} />
+      </Circle>
+      {[0.2, 0.42, 0.62, 0.8].map((f, i) => (
+        <Rect key={i} x={W / 2 - W * 0.17} y={hy - W * 0.16 + W * 0.16 * f} width={W * 0.34} height={2 + i * 1.5} color="rgba(30,6,60,0.85)" />
+      ))}
+      <Group opacity={op}>
+        <Path path={svgPath(d)} style="stroke" strokeWidth={1.6} color="rgba(0,240,255,0.5)" />
+      </Group>
+    </>
+  );
+}
+
+const ForestScene = React.memo(function ForestScene({ W, H, clock, pal, flip, seed, cool, realm }) {
   const S = W / 768;
+  const sd = (seed || 1) * 97;
+  const coolOp = useDerivedValue(() => {
+    'worklet';
+    return cool.value;
+  });
   const bokeh = useMemo(
-    () =>
-      Array.from({ length: 18 }, (_, i) => ({
-        x: _h(i + 1) * W,
-        y: (0.3 + _h(i + 40) * 0.6) * H,
-        r: (0.04 + _h(i + 80) * 0.06) * W,
-        c: ['#7ff3e0', '#ff9bec', '#ffe98a', '#8ab4ff'][i % 4],
-      })),
-    [W, H]
+    () => Array.from({ length: 18 }, (_, i) => ({ x: _h(i + 1 + sd) * W, y: (0.3 + _h(i + 40 + sd) * 0.6) * H, r: (0.04 + _h(i + 80 + sd) * 0.06) * W, c: pal.fl[i % 5] })),
+    [W, H, sd, pal]
   );
   const stars = useMemo(() => {
     const g = [[], [], []];
-    for (let i = 0; i < 84; i++) g[i % 3].push({ x: _h(i * 3 + 5) * W, y: _h(i * 3 + 9) * H * 0.5 });
+    for (let i = 0; i < 84; i++) g[i % 3].push({ x: _h(i * 3 + 5 + sd) * W, y: _h(i * 3 + 9 + sd) * H * 0.5 });
     return g;
-  }, [W, H]);
-  const flies = useMemo(() => {
-    const cols = ['#ffe98a', '#ff9a3b', '#7ff3e0', '#ff7ad9'];
-    return cols.map((c, ci) => ({
-      c,
-      items: Array.from({ length: 10 }, (_, i) => {
-        const n = ci * 10 + i;
-        return { x: _h(n + 200) * W, y: (0.26 + _h(n + 300) * 0.66) * H, ax: 6 + _h(n + 400) * 18, ay: 8 + _h(n + 500) * 22, kx: 2 + (n % 3), ky: 2 + ((n + 1) % 3), p1: _h(n + 600) * 6.28, p2: _h(n + 700) * 6.28 };
-      }),
-    }));
-  }, [W, H]);
-  const blobs = useMemo(
+  }, [W, H, sd]);
+  const flies = useMemo(
     () =>
-      [0, 1, 2].map((row) =>
-        Array.from({ length: 9 }, (_, i) => ({ x: (i / 8) * W + (_h(i + row * 11) - 0.5) * 0.08 * W, y: (0.5 + row * 0.075) * H + _h(i + row * 17) * 0.03 * H, r: (0.1 + _h(i + row * 23) * 0.06) * W }))
-      ),
-    [W, H]
+      pal.flies.map((c, ci) => ({
+        c,
+        items: Array.from({ length: 10 }, (_, i) => {
+          const n = ci * 10 + i;
+          return { x: _h(n + 200 + sd) * W, y: (0.26 + _h(n + 300 + sd) * 0.66) * H, ax: 6 + _h(n + 400) * 18, ay: 8 + _h(n + 500) * 22, kx: 2 + (n % 3), ky: 2 + ((n + 1) % 3), p1: _h(n + 600) * 6.28, p2: _h(n + 700) * 6.28 };
+        }),
+      })),
+    [W, H, sd, pal]
   );
-  const rowCols = ['rgba(14,34,86,0.6)', 'rgba(8,52,70,0.7)', 'rgba(6,62,56,0.8)'];
+  const blobs = useMemo(
+    () => [0, 1, 2].map((row) => Array.from({ length: 9 }, (_, i) => ({ x: (i / 8) * W + (_h(i + row * 11 + sd) - 0.5) * 0.08 * W, y: (0.5 + row * 0.075) * H + _h(i + row * 17 + sd) * 0.03 * H, r: (0.1 + _h(i + row * 23 + sd) * 0.06) * W }))),
+    [W, H, sd]
+  );
+  const rowCols = [rgba(pal.row, 0.5), rgba(pal.row, 0.65), rgba(pal.row, 0.8)];
   const sparks = [[0.28, 0.2, 8], [0.7, 0.16, 6], [0.5, 0.3, 5], [0.14, 0.34, 6], [0.86, 0.36, 5]];
+  const r = realm || 0;
   return (
     <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}>
-      <Rect x={0} y={0} width={W} height={H}>
-        <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={['#0b0f40', '#1c1670', '#2b1b82', '#17428c', '#0f5c78', '#0a4048', '#06282c']} positions={[0, 0.14, 0.28, 0.48, 0.64, 0.82, 1]} />
-      </Rect>
-      <Circle cx={W * 0.2} cy={H * 0.07} r={W * 0.6}>
-        <RadialGradient c={vec(W * 0.2, H * 0.07)} r={W * 0.6} colors={['rgba(255,90,210,0.4)', 'rgba(170,70,255,0.2)', 'rgba(0,0,0,0)']} />
-      </Circle>
-      <Circle cx={W * 0.85} cy={H * 0.2} r={W * 0.65}>
-        <RadialGradient c={vec(W * 0.85, H * 0.2)} r={W * 0.65} colors={['rgba(90,230,255,0.3)', 'rgba(80,120,255,0.15)', 'rgba(0,0,0,0)']} />
-      </Circle>
-      <Circle cx={W * 0.5} cy={H * 0.5} r={W * 0.8}>
-        <RadialGradient c={vec(W * 0.5, H * 0.5)} r={W * 0.8} colors={['rgba(60,190,200,0.22)', 'rgba(0,0,0,0)']} />
-      </Circle>
-      {stars.map((g, i) => (
-        <Twinkle key={i} pts={g} k={[9, 14, 20][i]} ph={i * 0.31} clock={clock} sw={[2.2, 1.7, 1.3][i]} />
-      ))}
-      {sparks.map(([fx, fy, sz], i) => (
-        <Group key={i} transform={[{ translateX: fx * W }, { translateY: fy * H }, { scale: sz }]} opacity={0.9}>
-          <Path path={svgPath(SPARK_D)} color="#ffffff" />
-        </Group>
-      ))}
-      <ShootingStar x0={W * 0.26} y0={H * 0.2} dx={W * 0.22} dy={-H * 0.07} K={4} ph={0.1} clock={clock} />
-      <ShootingStar x0={W * 0.55} y0={H * 0.17} dx={W * 0.24} dy={-H * 0.06} K={5} ph={0.55} clock={clock} />
-      <ShootingStar x0={W * 0.1} y0={H * 0.1} dx={W * 0.2} dy={-H * 0.04} K={3} ph={0.8} clock={clock} />
-      {/* tree silhouettes */}
-      <RoundedRect x={-W * 0.03} y={-10} width={W * 0.085} height={H * 0.5} r={W * 0.04} color="rgba(4,8,30,0.82)" />
-      <Path path={svgPath(`M${W * 0.04} ${H * 0.1}Q${W * 0.16} ${H * 0.08} ${W * 0.26} ${H * 0.14}M${W * 0.03} ${H * 0.18}Q${W * 0.12} ${H * 0.2} ${W * 0.2} ${H * 0.27}`)} style="stroke" strokeWidth={W * 0.018} strokeCap="round" color="rgba(4,8,30,0.8)" />
-      {[[0.1, 0.1, 0.1], [0.2, 0.15, 0.08], [0.06, 0.22, 0.09], [0.16, 0.26, 0.07]].map(([fx, fy, fr], i) => (
-        <Circle key={i} cx={W * fx} cy={H * fy} r={W * fr} color="rgba(6,30,60,0.78)" />
-      ))}
-      <RoundedRect x={W * 0.9} y={H * 0.18} width={W * 0.07} height={H * 0.4} r={W * 0.03} color="rgba(4,14,36,0.7)" />
-      {blobs.map((row, ri) => row.map((b, i) => <Circle key={`${ri}-${i}`} cx={b.x} cy={b.y} r={b.r} color={rowCols[ri]} />))}
-      {bokeh.map((b, i) => (
-        <Circle key={`bk${i}`} cx={b.x} cy={b.y} r={b.r}>
-          <RadialGradient c={vec(b.x, b.y)} r={b.r} colors={[rgba(b.c, 0.22), rgba(b.c, 0)]} />
+      <Group transform={flip ? [{ translateX: W }, { scaleX: -1 }] : []}>
+        <Rect x={0} y={0} width={W} height={H}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={pal.sky} positions={[0, 0.14, 0.28, 0.48, 0.64, 0.82, 1]} />
+        </Rect>
+        <Circle cx={W * 0.2} cy={H * 0.07} r={W * 0.6}>
+          <RadialGradient c={vec(W * 0.2, H * 0.07)} r={W * 0.6} colors={[pal.neb[0], pal.neb[1], 'rgba(0,0,0,0)']} />
         </Circle>
-      ))}
-      <Mushroom cx={W * 0.9} by={H * 0.66} cw={W * 0.44} ch={H * 0.12} sw={W * 0.07} sh={H * 0.22} c1="#ffb0e8" c2="#a45ad8" glow="#ff7ad9" />
-      <Mushroom cx={W * 0.9} by={H * 0.64} cw={W * 0.17} ch={H * 0.04} sw={W * 0.03} sh={H * 0.1} c1="#ffd08a" c2="#e08a3a" glow="#ffb04a" />
-      <Mushroom cx={W * 0.03} by={H * 0.76} cw={W * 0.28} ch={H * 0.075} sw={W * 0.045} sh={H * 0.11} c1="#ffc0ee" c2="#b45ce0" glow="#ff7ad9" />
-      <Fern x={W * 0.86} y={H * 0.8} sc={1.15 * S + 0.25} color="#5ef0d0" />
-      <Fern x={W * 0.95} y={H * 0.7} sc={0.9 * S + 0.2} color="#3fd8b8" fan={[-1.0, -0.6, -0.2, 0.2]} />
-      <Fern x={W * 0.08} y={H * 0.82} sc={0.95 * S + 0.2} color="#4ae0c0" />
-      <Fern x={W * 0.58} y={H * 0.98} sc={0.8 * S + 0.2} color="#3fd8b8" />
-      {/* mossy ground */}
-      <Path path={svgPath(`M0 ${H * 0.865}Q${W * 0.25} ${H * 0.82} ${W * 0.5} ${H * 0.855}T${W} ${H * 0.84}V${H}H0Z`)}>
-        <LinearGradient start={vec(0, H * 0.82)} end={vec(0, H)} colors={['#14604a', '#0b4036', '#062a2c']} />
-      </Path>
-      <Oval x={W * 0.15} y={H * 0.9} width={W * 0.6} height={H * 0.1} color="rgba(60,230,200,0.12)" />
-      {[[0.085, 0.935, 0.1, 0.1, -0.16], [0.44, 0.86, 0.075, 0.09, 0.08], [0.29, 0.93, 0.07, 0.07, -0.05], [0.64, 0.925, 0.085, 0.09, 0.14], [0.74, 0.985, 0.09, 0.08, -0.1]].map(([fx, fy, fw, fh, rot], i) => (
-        <Stone key={i} x={W * fx} y={H * fy} w={W * fw} h={H * fh} rot={rot} clock={clock} k={i} />
-      ))}
-      <SpinRing cx={W * 0.43} cy={H * 0.865} r={W * 0.065} color="#5cd8ff" clock={clock} dir={1} dash={[5, 9]} />
-      <SpinRing cx={W * 0.415} cy={H * 0.955} r={W * 0.08} color="#ff7a4a" clock={clock} dir={-1} dash={[4, 7]} />
-      {flies.map((f, i) => (
-        <Flies key={i} items={f.items} color={f.c} clock={clock} sw={3.2} />
-      ))}
+        <Circle cx={W * 0.85} cy={H * 0.2} r={W * 0.65}>
+          <RadialGradient c={vec(W * 0.85, H * 0.2)} r={W * 0.65} colors={[pal.neb2[0], pal.neb2[1], 'rgba(0,0,0,0)']} />
+        </Circle>
+        <Circle cx={W * 0.5} cy={H * 0.5} r={W * 0.8}>
+          <RadialGradient c={vec(W * 0.5, H * 0.5)} r={W * 0.8} colors={[rgba(pal.row, 0.35), 'rgba(0,0,0,0)']} />
+        </Circle>
+        {r === 2 && <Aurora W={W} H={H} clock={clock} />}
+        {r === 1 && <Moon W={W} H={H} clock={clock} />}
+        {stars.map((g, i) => (
+          <Twinkle key={i} pts={g} k={[9, 14, 20][i]} ph={i * 0.31} clock={clock} sw={[2.2, 1.7, 1.3][i]} />
+        ))}
+        {sparks.map(([fx, fy, sz], i) => (
+          <Group key={i} transform={[{ translateX: fx * W }, { translateY: fy * H }, { scale: sz }]} opacity={0.9}>
+            <Path path={svgPath(SPARK_D)} color="#ffffff" />
+          </Group>
+        ))}
+        <ShootingStar x0={W * 0.26} y0={H * 0.2} dx={W * 0.22} dy={-H * 0.07} K={4} ph={0.1} clock={clock} />
+        <ShootingStar x0={W * 0.55} y0={H * 0.17} dx={W * 0.24} dy={-H * 0.06} K={5} ph={0.55} clock={clock} />
+        <ShootingStar x0={W * 0.1} y0={H * 0.1} dx={W * 0.2} dy={-H * 0.04} K={3} ph={0.8} clock={clock} />
+        <RoundedRect x={-W * 0.03} y={-10} width={W * 0.085} height={H * 0.5} r={W * 0.04} color="rgba(4,8,30,0.82)" />
+        <Path path={svgPath(`M${W * 0.04} ${H * 0.1}Q${W * 0.16} ${H * 0.08} ${W * 0.26} ${H * 0.14}M${W * 0.03} ${H * 0.18}Q${W * 0.12} ${H * 0.2} ${W * 0.2} ${H * 0.27}`)} style="stroke" strokeWidth={W * 0.018} strokeCap="round" color="rgba(4,8,30,0.8)" />
+        {[[0.1, 0.1, 0.1], [0.2, 0.15, 0.08], [0.06, 0.22, 0.09], [0.16, 0.26, 0.07]].map(([fx, fy, fr], i) => (
+          <Circle key={i} cx={W * fx} cy={H * fy} r={W * fr} color={rgba(pal.row, 0.85)} />
+        ))}
+        <RoundedRect x={W * 0.9} y={H * 0.18} width={W * 0.07} height={H * 0.4} r={W * 0.03} color="rgba(4,14,36,0.7)" />
+        <JungleBack W={W} H={H} clock={clock} pal={pal} />
+        {blobs.map((row, ri) => row.map((b, i) => <Circle key={`${ri}-${i}`} cx={b.x} cy={b.y} r={b.r} color={rowCols[ri]} />))}
+        {bokeh.map((b, i) => (
+          <Circle key={`bk${i}`} cx={b.x} cy={b.y} r={b.r}>
+            <RadialGradient c={vec(b.x, b.y)} r={b.r} colors={[rgba(b.c, 0.22), rgba(b.c, 0)]} />
+          </Circle>
+        ))}
+        <Mushroom cx={W * 0.9} by={H * 0.66} cw={W * 0.44} ch={H * 0.12} sw={W * 0.07} sh={H * 0.22} c1={pal.m1[0]} c2={pal.m1[1]} glow={pal.m1[2]} />
+        <Mushroom cx={W * 0.9} by={H * 0.64} cw={W * 0.17} ch={H * 0.04} sw={W * 0.03} sh={H * 0.1} c1={pal.m2[0]} c2={pal.m2[1]} glow={pal.m2[2]} />
+        <Mushroom cx={W * 0.03} by={H * 0.76} cw={W * 0.28} ch={H * 0.075} sw={W * 0.045} sh={H * 0.11} c1={pal.m1[0]} c2={pal.m1[1]} glow={pal.m1[2]} />
+        <Fern x={W * 0.86} y={H * 0.8} sc={1.15 * S + 0.25} color={pal.fern} />
+        <Fern x={W * 0.95} y={H * 0.7} sc={0.9 * S + 0.2} color={pal.fern} fan={[-1.0, -0.6, -0.2, 0.2]} />
+        <Fern x={W * 0.08} y={H * 0.82} sc={0.95 * S + 0.2} color={pal.fern} />
+        <Fern x={W * 0.58} y={H * 0.98} sc={0.8 * S + 0.2} color={pal.fern} />
+        <Path path={svgPath(`M0 ${H * 0.865}Q${W * 0.25} ${H * 0.82} ${W * 0.5} ${H * 0.855}T${W} ${H * 0.84}V${H}H0Z`)}>
+          <LinearGradient start={vec(0, H * 0.82)} end={vec(0, H)} colors={pal.ground} />
+        </Path>
+        <Oval x={W * 0.15} y={H * 0.9} width={W * 0.6} height={H * 0.1} color={rgba(pal.row, 0.25)} />
+        {r === 1 && <Ripples W={W} H={H} clock={clock} />}
+        {r === 2 && <IceSpikes W={W} H={H} />}
+        {r === 3 && <NeonGrid W={W} H={H} clock={clock} />}
+        {[[0.085, 0.935, 0.1, 0.1, -0.16], [0.44, 0.86, 0.075, 0.09, 0.08], [0.29, 0.93, 0.07, 0.07, -0.05], [0.64, 0.925, 0.085, 0.09, 0.14], [0.74, 0.985, 0.09, 0.08, -0.1]].map(([fx, fy, fw, fh, rot], i) => (
+          <Stone key={i} x={W * fx} y={H * fy} w={W * fw} h={H * fh} rot={rot} clock={clock} k={i} />
+        ))}
+        <SpinRing cx={W * 0.43} cy={H * 0.865} r={W * 0.065} color={pal.ring[0]} clock={clock} dir={1} dash={[5, 9]} />
+        <SpinRing cx={W * 0.415} cy={H * 0.955} r={W * 0.08} color={pal.ring[1]} clock={clock} dir={-1} dash={[4, 7]} />
+        <JungleFront W={W} H={H} clock={clock} pal={pal} />
+        {flies.map((f, i) => (
+          <Flies key={i} items={f.items} color={f.c} clock={clock} sw={3.2} />
+        ))}
+        {r === 2 && <Snow W={W} H={H} clock={clock} />}
+      </Group>
       <Rect x={0} y={0} width={W} height={H}>
         <RadialGradient c={vec(W / 2, H * 0.48)} r={H * 0.78} colors={['rgba(2,4,24,0)', 'rgba(2,4,24,0)', 'rgba(2,4,24,0.6)']} positions={[0, 0.55, 1]} />
       </Rect>
+      <Group opacity={coolOp}>
+        <Rect x={0} y={0} width={W} height={H}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={[`rgba(${pal.tint},0)`, `rgba(${pal.tint},0.1)`, `rgba(${pal.tint},0.26)`]} />
+        </Rect>
+      </Group>
     </Canvas>
   );
 });
@@ -2268,7 +2714,7 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
 /* ============================== NEXTGEN v21: ORBDEX, RANKS, STORY, SETTINGS ============================== */
 let HAPTICS = true;
 let LITE = false;
-let DOCK = true; // controls live in their own strip under the board; false = old free-floating pads
+let DOCK = false; // controls live in their own strip under the board; false = old free-floating pads
 const MENUISH = ['menu', 'shop', 'dex', 'profile', 'settings', 'story', 'race', 'season'];
 const RARITY = {
   c: { name: 'COMMON', col: '#9fd0ff' },
@@ -3289,6 +3735,7 @@ function Game() {
   const svLand = useSharedValue(1e6);
   const svPulse = useSharedValue(0);
   const svClock = useSharedValue(0);
+  const svCool = useSharedValue(0);
   const pU = useSharedValue(0);
   const pL = useSharedValue(0);
   const pR = useSharedValue(0);
@@ -3541,7 +3988,10 @@ function Game() {
     G.banner = '';
     G.popping = new Set();
     G.placed = 0;
+    G.hint = cfg.hint ? { o: cfg.hint[0], col: cfg.hint[1] } : null;
+    G.biome = { v: Math.floor(Math.random() * 4), seed: 1 + Math.floor(Math.random() * 999) }; // a new look every game
     G.piece = spawn(G.next);
+    if (G.hint) G.piece = { ...G.piece, o: G.hint.o }; // hinted openers arrive already turned the right way
     if (G.fx) G.fx.snap(G.piece);
     shiftQueue();
     G.status = 'playing';
@@ -3551,7 +4001,7 @@ function Game() {
   const saveNx = () => {
     AsyncStorage.setItem(
       'nextgen',
-      JSON.stringify({ dex: G.dex, prof: G.prof, seen: G.seen, set: { haptics: HAPTICS, lite: LITE, dock: DOCK } })
+      JSON.stringify({ dex: G.dex, prof: G.prof, seen: G.seen, set: { haptics: HAPTICS, lite: LITE, dock2: DOCK } })
     ).catch(() => {});
   };
   const popBanner = (txt) => {
@@ -3904,7 +4354,9 @@ function Game() {
     render();
   };
 
-  const showAd = (cb) => {
+  const showAd = (cb, kind) => {
+    // real ad first (rewarded for continue / bonus star, interstitial between levels); countdown only if none is ready
+    if (presentAd(kind || 'interstitial', () => { lastAdAt = Date.now(); cb(); render(); }, () => render())) return;
     G.ad = { left: 3 };
     render();
     const tick = () => {
@@ -3931,7 +4383,7 @@ function Game() {
       G.piece = spawn(G.next);
       if (G.fx) G.fx.snap(G.piece);
       shiftQueue();
-    });
+    }, 'rewarded');
   const adStar = () =>
     showAd(() => {
       const before = totalStars(G.stars);
@@ -3942,7 +4394,7 @@ function Game() {
       G.hatched = ORBLINGS.find((o) => before < o.need && after >= o.need) || G.hatched;
       track('stars', after - before);
       G.starAd = true;
-    });
+    }, 'rewarded');
   const watchTop = async () => {
     if (G.replayBusy || G.replay) return;
     G.replayBusy = true;
@@ -4098,6 +4550,12 @@ function Game() {
           }
         }
       }
+      for (const k of [...hit]) {
+        const zr = Math.floor(k / COLS);
+        const zc = k % COLS;
+        if (G.board[zr][zc] !== ZAP) continue;
+        for (let x = 0; x < COLS; x++) if (G.board[zr][x]) hit.add(zr * COLS + x);
+      }
       const cells = [...hit].map((k) => [Math.floor(k / COLS), k % COLS]);
       G.rings = cells.map(([r, c]) => ({ r, c, col: G.board[r][c] }));
       G.popping = hit;
@@ -4157,6 +4615,9 @@ function Game() {
       if (big.length >= 6) {
         const [br, bc] = big.reduce((m, x) => (x[0] > m[0] ? x : m));
         G.board[br][bc] = BOMB;
+      } else if (big.length === 5 && G.level !== DAILY_L) {
+        const [br, bc] = big.reduce((m, x) => (x[0] > m[0] ? x : m));
+        G.board[br][bc] = ZAP;
       }
       render();
       await sleep(110);
@@ -4238,6 +4699,7 @@ function Game() {
 
   const lock = () => {
     G.lockAt = 0;
+    G.hint = null;
     if (G.fx && G.piece) G.fx.preLock(G.piece);
     const landFx = () => {
       buzz(0);
@@ -4361,6 +4823,7 @@ function Game() {
       onStartShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         G.gx = 0;
+        measureBoard();
       },
       onPanResponderMove: (_, g) => {
         // wider dead band (0.65 cell) so a small wobble never reverses the piece; fast swipes can step several cells
@@ -4373,11 +4836,27 @@ function Game() {
       },
       onPanResponderRelease: (_, g) => {
         if (g.dy > 70 && g.vy > 0.5 && Math.abs(g.dx) < 50) hardDrop();
-        else if (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12) rotate(1);
+        else if (Math.abs(g.dx) < 12 && Math.abs(g.dy) < 12) {
+          // TAP: on the piece = turn it; on any other column = glide the piece there
+          const col = G.bx != null && G.cell ? Math.floor((g.x0 - G.bx - 5) / G.cell) : -1;
+          const onPiece = G.piece && cellsOf(G.piece).some(([, c]) => c === col);
+          if (G.piece && col >= 0 && col < COLS && !onPiece) {
+            let n = 0;
+            while (G.piece && G.piece.c !== col && n++ < COLS) {
+              const before = G.piece.c;
+              move(col > G.piece.c ? 1 : -1);
+              if (!G.piece || G.piece.c === before) break;
+            }
+          } else rotate(1);
+        }
       },
     })
   ).current;
 
+  const boardRef = useRef(null);
+  const measureBoard = () => {
+    if (boardRef.current && boardRef.current.measureInWindow) boardRef.current.measureInWindow((x) => { G.bx = x; });
+  };
   const pause = () => {
     if (G.status !== 'playing' || !G.piece) return;
     G.status = 'paused';
@@ -4511,7 +4990,7 @@ function Game() {
         G.seen = j.seen || {};
         HAPTICS = !(j.set && j.set.haptics === false);
         LITE = !!(j.set && j.set.lite);
-        DOCK = !(j.set && j.set.dock === false);
+        DOCK = !!(j.set && j.set.dock2 === true);
         render();
       })
       .catch(() => {});
@@ -4583,6 +5062,15 @@ function Game() {
   }, []);
 
   /* ---------- draw ---------- */
+  useEffect(() => {
+    initAds();
+  }, []);
+  // v29: the world cools as you play: tint rises with goal progress (or pieces placed in endless/daily)
+  const coolRaw = G.status === 'menu' ? 0 : Math.max(progress(), Math.min(1, G.placed / 40));
+  const coolT = Number.isFinite(coolRaw) ? Math.max(0, Math.min(1, coolRaw)) : 0;
+  useEffect(() => {
+    svCool.value = withTiming(coolT, { duration: 1200 });
+  }, [Math.round(coolT * 20), G.level, G.status === 'menu']);
   // v27: full-screen. Hide system bars on launch and every time the app returns to the foreground.
   useEffect(() => {
     goImmersive();
@@ -4607,6 +5095,7 @@ function Game() {
   const display = G.board.map((row) => row.slice());
 
   const realm = realmOf(['menu', 'dex', 'profile', 'settings', 'race', 'season'].includes(G.status) ? G.unlocked : G.level);
+  const bio = G.biome || { v: (G.unlocked || 1) % 4, seed: 7 };
   useEffect(() => {
     setMusic(realm);
     setInstrument(realm);
@@ -4671,12 +5160,12 @@ function Game() {
     <View style={[styles.root, { backgroundColor: T.bg }]}>
       <StatusBar barStyle="light-content" hidden translucent backgroundColor="transparent" />
       <View pointerEvents="none" style={ABS_FILL}>
-        {realm === 0 && <ForestScene W={width} H={height} clock={svClock} />}
-        {realm !== 0 && skyBands(T.sky).map((c, i) => (
+        <ForestScene W={width} H={height} clock={svClock} pal={PALS[Math.min(7, realm * 2 + (bio.v & 1))]} flip={!!(bio.v & 2)} seed={bio.seed} cool={svCool} realm={realm} />
+        {false && skyBands(T.sky).map((c, i) => (
           <View key={i} style={{ flex: 1, backgroundColor: c }} />
         ))}
-        {realm !== 0 && <Scene realm={realm} width={width} height={height} />}
-        {realm !== 0 && [
+        {false && <Scene realm={realm} width={width} height={height} />}
+        {false && [
           { l: '-10%', t: '8%', z: 180, o: 0.10 },
           { l: '60%', t: '30%', z: 140, o: 0.09 },
           { l: '15%', t: '62%', z: 220, o: 0.08 },
@@ -4745,7 +5234,7 @@ function Game() {
         </View>
         )}
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: shake }, { scale: punch }] }}>
-        <View style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: 'transparent', borderColor: G.feverPcs > 0 ? '#ffd23b' : 'transparent' }]}>
+        <View ref={boardRef} onLayout={measureBoard} style={[styles.board, { width: cell * COLS + 8, height: cell * ROWS + 8, backgroundColor: 'transparent', borderColor: G.feverPcs > 0 ? '#ffd23b' : 'transparent' }]}>
           {USE_SKIA && (
             <BoardCanvas
               board={display} cell={cell} skin={SKIN} popping={G.popping} fall={G.fall} fallId={G.fallId || 0}
@@ -4753,6 +5242,9 @@ function Game() {
               playing={G.status === 'playing'} accent={T.accent}
               sv={{ float: svFloat, burst: svBurst, flash: svFlash, fall: svFall, land: svLand }}
             />
+          )}
+          {USE_SKIA && G.hint && G.status === 'playing' && (
+            <HintBeam left={2 + (G.hint.o === 3 ? G.hint.col - 1 : G.hint.col) * cell} width={cell * (G.hint.o === 1 || G.hint.o === 3 ? 2 : 1)} cell={cell} H={cell * ROWS + 2} pulse={svPulse} />
           )}
           {USE_SKIA && (
             <PieceLayer a={pvPair ? pvPair.a : 0} b={pvPair ? pvPair.b : 0} cell={cell} W={cell * COLS + 2} H={cell * ROWS + 2} danger={danger} skin={SKIN} pv={pvObj} />
@@ -5434,12 +5926,12 @@ function Game() {
         return (
           <>
             <FloatPad id="L" anchor="left" locked={DOCK} bounds={{ minX: 0, maxX: width - padSz - 24, minY: -(height - padSz - 120), maxY: 0 }}>
-              <TouchZone size={padSz} units={320} hit={padHit} zones={padZones} slide style={{ width: padSz, height: padSz, opacity: on ? 1 : 0.55 }}>
+              <TouchZone size={padSz} units={320} hit={padHit} zones={padZones} slide style={{ width: padSz, height: padSz, opacity: on ? 0.88 : 0.5 }}>
                 <PadArt size={padSz} pu={pU} pl={pL} pr={pR} pd={pD} />
               </TouchZone>
             </FloatPad>
             <FloatPad id="R" anchor="right" locked={DOCK} bounds={{ minX: -(width - actSz - 24), maxX: 0, minY: -(height - actSz - 120), maxY: 0 }}>
-              <TouchZone size={actSz} units={300} hit={actHit} zones={actZones} style={{ width: actSz, height: actSz, opacity: on ? 1 : 0.55 }}>
+              <TouchZone size={actSz} units={300} hit={actHit} zones={actZones} style={{ width: actSz, height: actSz, opacity: on ? 0.9 : 0.5 }}>
                 <ActArt size={actSz} pUndo={pUndo} pTurn={pTurn} pDrop={pDrop} pulse={svPulse} />
                 {lbl('turn', 'TURN', 31, 20)}
                 {lbl('drop', 'DROP', 35, 22)}
