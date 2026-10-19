@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated, ScrollView,
-  useWindowDimensions, StatusBar, PanResponder, Share, Platform, AppState, TextInput,
+  useWindowDimensions, StatusBar, PanResponder, Share, Platform, AppState, TextInput, Linking,
 } from 'react-native';
 import { Image, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -368,6 +368,7 @@ const cfgOf = (L) => {
 
 /* ============================== SAFETY NET, DAILY ============================== */
 const VERSION = 'v30';
+const PRIVACY_URL = 'https://qualyslive-code.github.io/ChainOrb/privacy.html';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
   const prevH = global.ErrorUtils && global.ErrorUtils.getGlobalHandler();
@@ -2864,6 +2865,12 @@ function SettingsScreen({ onToggleHaptics, onToggleLite, onToggleDock, onReplayS
       <Pressable onPress={onReplayStory} style={[styles.modeBtn, { width: 260, marginTop: 14 }]}>
         <Text style={styles.modeTxt}>📖 REPLAY STORY SCENES</Text>
       </Pressable>
+      <Pressable onPress={() => { Linking.openURL(PRIVACY_URL).catch(() => {}); }} style={[styles.modeBtn, { width: 260, marginTop: 10 }]}>
+        <Text style={styles.modeTxt}>🔒 PRIVACY POLICY</Text>
+      </Pressable>
+      <Text selectable style={[styles.hint, { fontSize: 11, textAlign: 'center', maxWidth: 280, marginTop: 8 }]}>
+        Player ID: {PID}
+      </Text>
       <Pressable style={{ marginTop: 18 }} onPress={onBack}>
         <Text style={styles.hint}>BACK</Text>
       </Pressable>

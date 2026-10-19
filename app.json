@@ -17,9 +17,10 @@
       },
       "package": "com.chainorb.game",
       "permissions": [
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -47,9 +48,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "4ca97e82-63c3-41fc-b14a-e89a6a834a9a"
+        "projectId": "bb20f446-8fc1-4f0e-87a4-2deb97c0a03c"
       }
     },
-    "owner": "riderappdialadeliveryug"
+    "owner": "fellythedon"
   }
 }
