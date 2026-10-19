@@ -2522,13 +2522,73 @@ function CountUp({ to, style }) {
   return <Text style={style}>{v}</Text>;
 }
 
-const MAP_W = 300, NODE = 58, NODE_H = 78, HEAD_H = 40;
-const nodeX = (L) => MAP_W / 2 + Math.sin((L - 1) * 0.95) * 86;
+const MAP_W = 300, NODE = 58, NODE_H = 78, HEAD_H = 112;
+// the first node of a realm sits straight above the last node of the one before it, so the bridge between them runs vertically
+const nodeX = (L) => (L > 1 && secOf(L) !== secOf(L - 1) ? nodeX(L - 1) : MAP_W / 2 + Math.sin((L - 1) * 0.95) * 86);
 // FLIPPED_MAP
 const nodeTop = (L) => 46 + (L - 1) * NODE_H + secOf(L) * HEAD_H;
-const mapH = () => nodeTop(MAX_LEVEL) + NODE_H + 40;
+const mapH = () => nodeTop(MAX_LEVEL) + NODE_H + 70;
 const nodeY = (L) => nodeTop(MAX_LEVEL) - nodeTop(L) + 46; // level 1 at the bottom, MAX at the top
 const secName = (L) => REALMS[realmOf(L)].name + (L > 20 ? ' ' + ['II', 'III', 'IV', 'V'][Math.min(3, Math.floor((L - 21) / 40))] : '');
+// ---- realm covers, outer-layer scenery and bridges ----
+const REALM_CREST = ['🍄', '🌊', '🏔️', '🌆'];
+const REALM_TEASE = [
+  'Glowing mushrooms. Watchful owls.',
+  'Rocks creep in. The Lake Spirit waits.',
+  'Rocks rain down. Cracks run deep.',
+  'Five colors. One final boss.',
+];
+// scenery that fills the empty edges of the map, one set per realm (skulls and bones included)
+const REALM_PROPS = [
+  ['🍄', '🦉', '🌳', '🕸️', '💀', '🦇', '🌿', '🕯️', '🍂'],
+  ['🌾', '🐸', '🛶', '🦴', '💀', '🐚', '🦆', '🌿', '🪨'],
+  ['🧊', '❄️', '🌲', '💀', '🦴', '⛄', '🐧', '🏔️', '🪨'],
+  ['🏙️', '🤖', '📡', '🛸', '⚡', '🔌', '💿', '🧪', '👾'],
+];
+// one bridge look per realm: root bridge, rope-and-plank over water, ice span, neon light bridge
+const BRIDGE = [
+  { plank: '#4a331d', plank2: '#6b4a2b', rail: '#7bd13b', post: '🍄', band: 'rgba(24,8,52,0.62)', edge: '#c9ff7a', deco: ['🕸️', '🦇', '🍄', '🕸️', '🦇'] },
+  { plank: '#8a5e33', plank2: '#b27d46', rail: '#f0dcae', post: '🏮', band: 'rgba(16,88,168,0.58)', edge: '#7ff3e0', deco: ['🌾', '🐸', '🌾', '🦆', '🌾'] },
+  { plank: '#bfe6fa', plank2: '#e4f6ff', rail: '#ffffff', post: '❄️', band: 'rgba(110,180,236,0.52)', edge: '#ffffff', deco: ['🧊', '❄️', '🧊', '❄️', '🧊'] },
+  { plank: '#2b0e5c', plank2: '#5a1fa8', rail: '#00f5ff', post: '⚡', band: 'rgba(22,6,66,0.7)', edge: '#ff9bec', deco: ['⚡', '📡', '⚡', '🔌', '⚡'], neon: true },
+];
+const BRIDGE_W = 46;
+function Bridge({ cx, top, h, realm, open, float }) {
+  const B = BRIDGE[realm];
+  const n = Math.max(6, Math.floor(h / 13));
+  const gap = (h - n * 9) / (n - 1);
+  const planks = [];
+  for (let i = 0; i < n; i++) {
+    planks.push(
+      <View key={i} style={{ height: 9, marginBottom: i < n - 1 ? gap : 0, backgroundColor: i % 2 ? B.plank : B.plank2, borderRadius: 3, borderWidth: B.neon ? 1 : 0, borderColor: '#00f5ff' }} />
+    );
+  }
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', left: cx - BRIDGE_W / 2, top, width: BRIDGE_W, height: h, opacity: open ? 1 : 0.55 }}>
+      {B.neon ? (
+        <Animated.View style={{ position: 'absolute', left: -8, right: -8, top: -4, bottom: -4, borderRadius: 10, backgroundColor: 'rgba(255,79,216,0.22)', opacity: float.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }) }} />
+      ) : null}
+      <View style={{ position: 'absolute', left: 6, right: 6, top: 0, bottom: 0 }}>{planks}</View>
+      <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, borderRadius: 2, backgroundColor: B.rail }} />
+      <View style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, borderRadius: 2, backgroundColor: B.rail }} />
+      <Text style={{ position: 'absolute', left: -16, top: -8, fontSize: 20 }}>{B.post}</Text>
+      <Text style={{ position: 'absolute', right: -16, top: -8, fontSize: 20 }}>{B.post}</Text>
+      <Text style={{ position: 'absolute', left: -16, bottom: -10, fontSize: 20 }}>{B.post}</Text>
+      <Text style={{ position: 'absolute', right: -16, bottom: -10, fontSize: 20 }}>{B.post}</Text>
+    </View>
+  );
+}
+function RealmSign({ L, left, top, width }) {
+  const r = realmOf(L);
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', left, top, width, paddingVertical: 5, paddingHorizontal: 8, borderRadius: 12, backgroundColor: 'rgba(8,6,28,0.74)', borderWidth: 2, borderColor: REALMS[r].accent }}>
+      <Text adjustsFontSizeToFit numberOfLines={1} style={{ color: REALMS[r].accent, fontFamily: FONT, fontSize: 13, letterSpacing: 2 }}>
+        {REALM_CREST[r]} {secName(L)}
+      </Text>
+      <Text style={{ color: '#e8e8ff', fontFamily: FONT, fontSize: 10, lineHeight: 13, marginTop: 2 }}>{REALM_TEASE[r]}</Text>
+    </View>
+  );
+}
 function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
   const H = mapH();
   const hr = new Date().getHours();
@@ -2537,14 +2597,49 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
   const items = [];
   for (let L = 1; L <= MAX_LEVEL; L++) {
     const x = nodeX(L), y = nodeY(L);
-    if (L === 1 || secOf(L) !== secOf(L - 1)) {
-      items.push(
-        <Text key={`h${L}`} style={{ position: 'absolute', left: 0, right: 0, top: y + NODE + 22, textAlign: 'center', color: REALMS[realmOf(L)].accent, fontFamily: FONT, fontSize: 14, letterSpacing: 3, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 4 }}>
-          {secName(L)}
-        </Text>
-      );
+    const cross = L > 1 && secOf(L) !== secOf(L - 1);
+    const R = realmOf(L);
+    // outer-layer scenery on whichever side of the path has room
+    {
+      const xa = nodeX(Math.max(1, L - 1)), xc = nodeX(Math.min(MAX_LEVEL, L + 1));
+      const lo = Math.min(xa, x, xc), hi = Math.max(xa, x, xc) + NODE;
+      const leftFree = lo - 6, rightFree = MAP_W - hi - 6;
+      const sz = 26 + ((L * 7) % 3) * 6;
+      const side = leftFree >= rightFree ? 0 : 1;
+      const free = side ? rightFree : leftFree;
+      if (free >= sz + 6) {
+        const set = REALM_PROPS[R];
+        const jx = ((L * 37) % 100) / 100;
+        const px = side ? hi + 6 + jx * (free - sz) : 2 + jx * (free - sz);
+        const py = y + ((L * 53) % 50) - 6;
+        const rot = ((L * 11) % 25) - 12;
+        const emo = set[(L * 5 + (L >> 1)) % set.length];
+        const common = { position: 'absolute', left: px, top: py, fontSize: sz, opacity: 0.92 };
+        items.push(
+          L % 3 === 0 ? (
+            <Animated.Text key={`pp${L}`} pointerEvents="none" style={[common, { transform: [{ rotate: rot + 'deg' }, { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, L % 2 ? -5 : 5] }) }] }]}>{emo}</Animated.Text>
+          ) : (
+            <Text key={`pp${L}`} pointerEvents="none" style={[common, { transform: [{ rotate: rot + 'deg' }] }]}>{emo}</Text>
+          )
+        );
+      }
     }
-    if (L > 1) {
+    if (cross) {
+      const B = BRIDGE[R];
+      const cx = x + NODE / 2;
+      items.push(
+        <View key={`rv${L}`} pointerEvents="none" style={{ position: 'absolute', left: -40, right: -40, top: y + 86, height: 76, backgroundColor: B.band, borderTopWidth: 2, borderBottomWidth: 2, borderColor: B.edge + '66' }} />
+      );
+      B.deco.forEach((e, i) => items.push(
+        <Text key={`rd${L}-${i}`} pointerEvents="none" style={{ position: 'absolute', left: 4 + i * 62, top: y + (i % 2 ? 90 : 138), fontSize: 17, opacity: 0.7 }}>{e}</Text>
+      ));
+      items.push(<Bridge key={`br${L}`} cx={cx} top={y + NODE + 24} h={102} realm={R} open={L <= unlocked} float={float} />);
+      const bw = cx < MAP_W / 2 ? MAP_W - (cx + 34) - 6 : cx - 34 - 6;
+      items.push(<RealmSign key={`h${L}`} L={L} left={cx < MAP_W / 2 ? cx + 34 : 6} top={y + 88} width={bw} />);
+    } else if (L === 1) {
+      items.push(<RealmSign key="h1" L={1} left={40} top={y + NODE + 22} width={220} />);
+    }
+    if (L > 1 && !cross) {
       const px = nodeX(L - 1), py = nodeY(L - 1);
       [0.28, 0.5, 0.72].forEach((t, i) => items.push(
         <View key={`d${L}-${i}`} style={{ position: 'absolute', left: px + (x - px) * t + NODE / 2 - 4, top: py + (y - py) * t + NODE / 2 - 4, width: 8, height: 8, borderRadius: 4, backgroundColor: L <= unlocked ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.25)' }} />
