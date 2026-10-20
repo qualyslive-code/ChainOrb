@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Animated, ScrollView,
-  useWindowDimensions, StatusBar, PanResponder, Share, Platform, AppState, TextInput, Linking,
+  useWindowDimensions, StatusBar, PanResponder, Share, Platform, AppState, TextInput, Linking, BackHandler,
 } from 'react-native';
 import { Image, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -144,10 +144,15 @@ const REALMS = [
   { name: 'MOONLIT LAKE', bg: '#2a7fd4', sky: ['#35d0c4', '#2a7fd4', '#3b3fb5'], board: 'rgba(5,20,70,0.50)', border: '#7ff3e0', accent: '#7ff3e0' },
   { name: 'FROST PEAKS', bg: '#5aa2f0', sky: ['#a8e0ff', '#5aa2f0', '#4a5fd0'], board: 'rgba(10,25,80,0.45)', border: '#e6f6ff', accent: '#ffffff' },
   { name: 'NEON CITY', bg: '#8a3bff', sky: ['#ff4fd8', '#8a3bff', '#2a1a7a'], board: 'rgba(15,5,50,0.55)', border: '#ff9bec', accent: '#ff9bec' },
+  { name: 'SUNNY MEADOW', bg: '#2f77d8', sky: ['#1d4fb0', '#2f77d8', '#f2d9a0'], board: 'rgba(8,24,80,0.42)', border: '#fff2a8', accent: '#ffe27a', glass: 'rgba(6,18,60,0.30)', dim: 'rgba(6,18,60,0.14)' },
+  { name: 'DUSTY DUNES', bg: '#6a1a5a', sky: ['#1a0b45', '#b02a7a', '#ffb050'], board: 'rgba(40,8,40,0.5)', border: '#ffc27a', accent: '#ffc27a', glass: 'rgba(24,6,30,0.26)', dim: 'rgba(24,6,30,0.10)' },
+  { name: 'STORM JUNGLE', bg: '#10242e', sky: ['#0a1a22', '#183a46', '#2a5a62'], board: 'rgba(4,16,26,0.55)', border: '#9fd8ff', accent: '#9fd8ff', glass: 'rgba(4,14,24,0.26)', dim: 'rgba(4,14,24,0.12)' },
+  { name: 'GOLDEN DAWN', bg: '#7a3a8a', sky: ['#2a2a6e', '#ff7a8a', '#ffe0a0'], board: 'rgba(50,14,60,0.46)', border: '#ffe0a0', accent: '#ffd08a', glass: 'rgba(40,10,50,0.28)', dim: 'rgba(40,10,50,0.12)' },
 ];
 // campaign worlds: 1-20 as before, then 21-100 loop through the four realms in blocks of 10
 const secOf = (L) => (L <= 20 ? Math.floor((L - 1) / 5) : 4 + Math.floor((L - 21) / 10));
-const realmOf = (L) => (L <= 20 ? Math.min(3, Math.floor((L - 1) / 5)) : L >= 900 ? 3 : Math.floor((L - 21) / 10) % 4);
+const ACT2 = [4, 5, 6, 1, 7, 2, 0, 3]; // levels 21-100: meadow, desert, storm, lake, dawn, frost, grove, neon
+const realmOf = (L) => (L <= 20 ? Math.min(3, Math.floor((L - 1) / 5)) : L === DAILY_L ? ACT2[dateSeed() % 8] : L >= 900 ? 3 : ACT2[Math.floor((L - 21) / 10) % 8]);
 const lvlName = (L) => (L === DAILY_L ? 'D' : L === ENDLESS_L ? '∞' : L === EVENT_L ? '★' : String(L));
 // t: score | chain | rocks | pairs.  g goal, c colors, s speed ms, m move limit,
 // rocks random rocks, rain = a rock falls every N pairs, pre = preset rows (1-5 orbs, 6 rock, 8 cracked)
@@ -367,7 +372,7 @@ const cfgOf = (L) => {
 };
 
 /* ============================== SAFETY NET, DAILY ============================== */
-const VERSION = 'v30';
+const VERSION = 'v33';
 const PRIVACY_URL = 'https://qualyslive-code.github.io/ChainOrb/privacy.html';
 // Any crash is saved and shown on the menu next launch, so every build tells us what broke.
 try {
@@ -699,7 +704,48 @@ function conga(f) {
   }
   return normalize(out, 0.7);
 }
-const INSTR = [kalimba, adungu, glassBell, conga];
+function pluckBright(f) { // meadow: bright music-box pluck
+  const n = Math.floor(SR * 0.7);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const v = Math.sin(2 * Math.PI * f * t) * Math.exp(-4.5 * t) + 0.4 * Math.sin(2 * Math.PI * f * 2 * t) * Math.exp(-7 * t) + 0.18 * Math.sin(2 * Math.PI * f * 3.01 * t) * Math.exp(-12 * t);
+    out[i] = Math.min(1, t / 0.002) * v;
+  }
+  return normalize(out, 0.55);
+}
+function handpan(f) { // desert: round, warm hum with a slow bloom
+  const n = Math.floor(SR * 1.0);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const v = Math.sin(2 * Math.PI * f * t) * Math.exp(-3 * t) + 0.5 * Math.sin(2 * Math.PI * f * 2 * t) * Math.exp(-4 * t) + 0.22 * Math.sin(2 * Math.PI * f * 3 * t) * Math.exp(-6 * t) + 0.14 * Math.sin(2 * Math.PI * f * 1.006 * t) * Math.exp(-3.4 * t);
+    out[i] = Math.min(1, t / 0.004) * v;
+  }
+  return normalize(out, 0.6);
+}
+function marimba(f) { // storm: soft wooden mallet
+  const n = Math.floor(SR * 0.5);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    const v = Math.sin(2 * Math.PI * f * t) * Math.exp(-8 * t) + 0.45 * Math.sin(2 * Math.PI * f * 4 * t) * Math.exp(-26 * t) + 0.12 * Math.sin(2 * Math.PI * f * 10 * t) * Math.exp(-60 * t);
+    out[i] = Math.min(1, t / 0.0015) * v;
+  }
+  return normalize(out, 0.6);
+}
+function harp(f) { // dawn: plucked string, long shimmering tail
+  const n = Math.floor(SR * 1.1);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SR;
+    let v = 0;
+    for (let k = 1; k <= 8; k++) v += (Math.sin(2 * Math.PI * f * k * t) * Math.exp(-(1.4 + 2.2 * k) * t)) / (k * 0.9);
+    out[i] = Math.min(1, t / 0.002) * v;
+  }
+  return normalize(out, 0.58);
+}
+const INSTR = [kalimba, adungu, glassBell, conga, pluckBright, handpan, marimba, harp];
 const INSTR_URI = {};
 let instrReady = false;
 let instrWant = -1;
@@ -776,6 +822,32 @@ const TRACKS = [
     chords: [[-17, -14, -10], [-9, -5, -2], [-14, -10, -7], [-7, -3, 0]],
     pat: [0, 2, 1, 2, 3, 2, 1, 2, 0, 2, 1, 4, 3, 2, 4, 2],
   },
+  // 4 SUNNY MEADOW: bright, bouncy, light
+  {
+    bpm: 98, bassEvery: 4, kick: false, arpGain: 0.2, padGain: 0.12,
+    chords: [[-9, -5, -2], [-5, -2, 2], [-12, -8, -5], [-7, -3, 0]],
+    pat: [0, 2, 1, 3, 2, 4, 3, 2, 0, 2, 1, 3, 4, 3, 2, 1],
+  },
+  // 5 DUSTY DUNES: Phrygian-dominant pull (A major / Bb major), sparse, with a wind bed
+  {
+    bpm: 84, bassEvery: 2, kick: false, arpGain: 0.18, padGain: 0.16,
+    chords: [[-12, -8, -5], [-11, -7, -4], [-12, -8, -5], [-17, -13, -10]],
+    pat: [0, -1, 1, 2, -1, 2, 3, -1, 0, -1, 1, 2, -1, 4, 3, -1],
+    noise: { g: 0.5, a: 0.04, mod: 3 },
+  },
+  // 6 STORM JUNGLE: slow minor, with rain hiss under it
+  {
+    bpm: 66, bassEvery: 8, kick: false, arpGain: 0.16, padGain: 0.22,
+    chords: [[-12, -9, -5], [-14, -10, -7], [-16, -12, -9], [-17, -14, -10]],
+    pat: [0, -1, 1, -1, 2, -1, 1, -1, 0, -1, 2, -1, 3, -1, 2, -1],
+    noise: { g: 0.1, a: 0.45, mod: 4 },
+  },
+  // 7 GOLDEN DAWN: gentle major, rising lines
+  {
+    bpm: 76, bassEvery: 4, kick: false, arpGain: 0.18, padGain: 0.18,
+    chords: [[-14, -10, -7], [-12, -8, -5], [-9, -5, -2], [-5, -2, 2]],
+    pat: [0, 1, 2, 3, 4, 3, 2, 1, 0, 1, 2, 4, 3, 2, 1, 2],
+  },
 ];
 
 const musTick = () => new Promise((r) => setTimeout(r, 0));
@@ -818,6 +890,17 @@ async function makeTrack(d) {
         add(t0 + i * (beat / 2), tone(notes[idx] * up, 0.5, { decay: 6, attack: 0.005, gain: 1, harm: [1, 0.3] }), d.arpGain);
       }
       if (i % 4 === 3) await musTick();
+    }
+  }
+  if (d.noise) {
+    // rain hiss / desert wind: low-passed noise with a slow swell. Whole swell cycles per loop, so the loop is seamless.
+    const nz = d.noise;
+    let y = 0;
+    for (let i = 0; i < total; i++) {
+      y += nz.a * (Math.random() * 2 - 1 - y);
+      const m = nz.mod ? 0.65 + 0.35 * Math.sin((i / total) * Math.PI * 2 * nz.mod) : 1;
+      buf[i] += y * nz.g * m;
+      if ((i & 32767) === 0) await musTick();
     }
   }
   let peak = 0;
@@ -889,7 +972,7 @@ function setMusic(r) {
 // current realm first, then the rest in the background
 async function loadAllMusic() {
   const first = musWant >= 0 ? musWant : 0;
-  const order = [first, ...[0, 1, 2, 3].filter((x) => x !== first)];
+  const order = [first, ...[0, 1, 2, 3, 4, 5, 6, 7].filter((x) => x !== first)];
   for (const r of order) {
     await loadMusic(r);
     await new Promise((res) => setTimeout(res, 1500));
@@ -2173,6 +2256,18 @@ const PALS = [
   { n: 'Aurora Ridge', sky: ['#070a28', '#14185a', '#2a1a7a', '#3a4aa0', '#4f8ac0', '#3a6a8f', '#1d3a52'], neb: ['rgba(120,255,200,0.3)', 'rgba(160,120,255,0.2)'], neb2: ['rgba(255,150,230,0.25)', 'rgba(150,170,255,0.14)'], ground: ['#6aa0c8', '#42709c', '#223c60'], l1: ['#0a1430', '#5a8ad0'], l2: ['#08102a', '#4a76b8'], l3: ['#050a1c', '#3a5c94'], fern: '#b8f0ff', m1: ['#e8d8ff', '#9a7ae0', '#c8a8ff'], m2: ['#d8fff0', '#7ad8c0', '#a8ffe0'], fl: ['#c8a8ff', '#7affd0', '#ffffff', '#ff9ad8', '#c8a8ff'], flies: ['#e8d8ff', '#a8ffe0', '#ffffff', '#c8a8ff'], ray: '170,255,220', mist: '190,240,255', row: '#1c3a68', ring: ['#a8ffe0', '#c8a8ff'], tint: '130,200,255' },
   { n: 'Neon Night', sky: ['#0a0220', '#1c0540', '#3a0a6a', '#6a1a8a', '#8a2a8a', '#4a1a5a', '#240a34'], neb: ['rgba(255,60,200,0.4)', 'rgba(150,60,255,0.22)'], neb2: ['rgba(0,240,255,0.3)', 'rgba(60,120,255,0.16)'], ground: ['#3a1060', '#240a46', '#140628'], l1: ['#12041f', '#c02a9a'], l2: ['#0e031a', '#9a2088'], l3: ['#080212', '#701870'], fern: '#ff7ae0', m1: ['#ff9af0', '#8a3ae0', '#ff3ad0'], m2: ['#9afff8', '#3a8ae0', '#00f0ff'], fl: ['#00f0ff', '#ff3ad0', '#ffe23a', '#00f0ff', '#ff3ad0'], flies: ['#00f0ff', '#ff3ad0', '#ffe23a', '#7aff9a'], ray: '255,120,230', mist: '255,140,230', row: '#3a0a5a', ring: ['#00f0ff', '#ff3ad0'], tint: '0,200,255' },
   { n: 'Cyber Reef', sky: ['#020a22', '#041a46', '#062c6e', '#0a4a9a', '#0a6aaa', '#06406a', '#031e34'], neb: ['rgba(0,230,255,0.35)', 'rgba(60,140,255,0.2)'], neb2: ['rgba(255,60,200,0.28)', 'rgba(150,80,255,0.15)'], ground: ['#0e4a8a', '#08305e', '#041a34'], l1: ['#021428', '#1a9ad8'], l2: ['#010f20', '#1580b8'], l3: ['#010a16', '#0e6090'], fern: '#5ae8ff', m1: ['#9af8ff', '#3a7ae0', '#00e0ff'], m2: ['#ffa0f0', '#a03ae0', '#ff3ad0'], fl: ['#00e0ff', '#ff3ad0', '#ffe23a', '#7aff9a', '#00e0ff'], flies: ['#00e0ff', '#ff3ad0', '#7aff9a', '#ffe23a'], ray: '120,230,255', mist: '140,230,255', row: '#0a3a6a', ring: ['#00e0ff', '#ff3ad0'], tint: '0,170,255' },
+  // ---- v33: realm 4 sunny meadow (8,9) ----
+  { n: 'Sunny Meadow', sky: ['#1b4aa8', '#2d74d6', '#58a2ea', '#98cbf0', '#f0dca4'], sun: [0.78, 0.2], sunc: '255,240,190', ray: '255,236,170', mist: '255,255,255', cloud: '255,255,255', hills: [['#2f9a58', '#1a6a3c'], ['#27864a', '#145a34'], ['#1d7040', '#0e4a2c']], ground: ['#3cab52', '#23803c', '#12552a'], tree: ['#0f4a2a', '#2f9a58'], fl: ['#ffe36b', '#ff7aa8', '#ffffff', '#ff9a4a', '#c8a8ff'], flies: ['#ffffff', '#ffe36b', '#ffb0d8', '#bfe8ff'], fern: '#6adb7a', tint: '255,150,80' },
+  { n: 'Golden Afternoon', sky: ['#274a9a', '#5a7ad0', '#ffa878', '#ffcf8a', '#ffe8b0'], sun: [0.22, 0.3], sunc: '255,205,140', ray: '255,205,140', mist: '255,225,190', cloud: '255,235,215', hills: [['#4a9a48', '#25683a'], ['#3a8640', '#1a5a32'], ['#2a7038', '#104a2a']], ground: ['#4aa84a', '#2a7a38', '#14502a'], tree: ['#123a24', '#3a8a48'], fl: ['#ffd36b', '#ff8a6a', '#ffffff', '#ffb04a', '#ffa8c8'], flies: ['#fff0c0', '#ffd36b', '#ffc0a0', '#ffffff'], fern: '#8adb7a', tint: '120,60,160' },
+  // ---- realm 5 dusty dunes (10 dusk, 11 night) ----
+  { n: 'Dusk Dunes', sky: ['#0d0a3a', '#2e1a6e', '#a02a7a', '#ff6a4a', '#ffb050', '#ffe09a'], sun: [0.5, 0.58], sunc: '255,190,110', mesa: '#4a1a4a', dunes: [['#e88a48', '#8a3a2a'], ['#c8683a', '#6a2a28'], ['#a24a30', '#4a1c24'], ['#7a3428', '#2a1020']], crest: '255,210,150', cactus: '#1a0a1e', sand: '255,200,140', mist: '255,170,110', tint: '40,20,120' },
+  { n: 'Desert Night', night: 1, sky: ['#04081f', '#0b1450', '#1c2a7a', '#3a4a9a', '#7a6aa0', '#c09a9a'], sun: [0.5, 0.58], sunc: '200,210,255', mesa: '#10183a', dunes: [['#5a6ab0', '#1c2860'], ['#4a5aa0', '#141e50'], ['#3a4a8a', '#0e1640'], ['#2a3870', '#080e30']], crest: '170,190,255', cactus: '#050a1c', sand: '170,190,255', mist: '120,150,230', tint: '0,60,160' },
+  // ---- realm 6 storm jungle (12, 13): same fields as the grove palettes ----
+  { n: 'Storm Jungle', sky: ['#06121a', '#0c2430', '#133a46', '#1b4f58', '#1d5a5e', '#134046', '#0a2a30'], neb: ['rgba(120,200,220,0.2)', 'rgba(80,140,200,0.1)'], neb2: ['rgba(170,230,240,0.16)', 'rgba(100,170,210,0.1)'], ground: ['#1c5a54', '#103c3c', '#082628'], l1: ['#031418', '#1d7a72'], l2: ['#02101a', '#186862'], l3: ['#010b10', '#12524e'], fern: '#8fe8d8', m1: ['#b8fff0', '#4a9a9a', '#7fe8d8'], m2: ['#d8f0ff', '#6a9ac0', '#9fd0f0'], fl: ['#9fe8ff', '#7ff3e0', '#ffffff', '#9fd0ff', '#9fe8ff'], flies: ['#b8fff0', '#7ff3e0', '#dff8ff', '#9fd0ff'], ray: '140,210,230', mist: '150,220,230', row: '#0a3038', ring: ['#7fe8f0', '#9fd0ff'], tint: '60,120,170' },
+  { n: 'Midnight Downpour', sky: ['#0a0a22', '#16183e', '#262a5a', '#34407a', '#3a5a88', '#26405e', '#121e34'], neb: ['rgba(150,130,255,0.22)', 'rgba(100,90,220,0.1)'], neb2: ['rgba(120,200,255,0.18)', 'rgba(90,130,230,0.1)'], ground: ['#2a4a7a', '#1a3258', '#0e1e38'], l1: ['#050a1c', '#2a5a9a'], l2: ['#040818', '#244c84'], l3: ['#030612', '#1c3c6a'], fern: '#9ac8ff', m1: ['#cfd8ff', '#6a7ae0', '#9aa8ff'], m2: ['#e8f0ff', '#7a98d8', '#b8d0ff'], fl: ['#b8c8ff', '#9fd0ff', '#ffffff', '#c8b8ff', '#b8c8ff'], flies: ['#cfd8ff', '#9fd0ff', '#ffffff', '#c8b8ff'], ray: '170,190,255', mist: '170,190,255', row: '#14224a', ring: ['#9fb8ff', '#c8b8ff'], tint: '90,110,200' },
+  // ---- realm 7 golden dawn (14, 15) ----
+  { n: 'Golden Dawn', dawn: 1, sky: ['#241e66', '#6a3a96', '#d85a8a', '#ff9a6a', '#ffd08a'], sun: [0.5, 0.6], sunc: '255,210,140', ray: '255,200,140', mist: '255,200,170', cloud: '255,180,160', hills: [['#7a3a7a', '#3a1a5a'], ['#5a2a6a', '#2a1250'], ['#3a1a52', '#1a0c3a']], ground: ['#4a2a5a', '#2a1646', '#160a30'], tree: ['#120a2a', '#3a1a52'], fl: ['#ffb0d0', '#ffe0a0', '#ffffff', '#ff8ab0', '#ffd08a'], flies: ['#ffe0a0', '#ffffff', '#ffb0d0', '#ffd08a'], fern: '#ff9ac0', tint: '255,120,80' },
+  { n: 'First Light', dawn: 1, sky: ['#0f1a4a', '#2a3a8a', '#5a6aa8', '#e89a8a', '#ffcf9a'], sun: [0.3, 0.62], sunc: '255,200,150', ray: '255,200,160', mist: '255,200,180', cloud: '255,200,190', hills: [['#2a5a7a', '#183a58'], ['#204a6a', '#12304a'], ['#183a58', '#0c2238']], ground: ['#2a5a78', '#1a3a58', '#0e2238'], tree: ['#08142a', '#204a6a'], fl: ['#ffc0d8', '#ffe0a0', '#ffffff', '#a8d0ff', '#ffd08a'], flies: ['#ffe0a0', '#ffffff', '#ffc0d8', '#a8d0ff'], fern: '#8adcf0', tint: '255,140,90' },
 ];
 
 function Moon({ W, H, clock }) {
@@ -2287,6 +2382,539 @@ function NeonGrid({ W, H, clock }) {
   );
 }
 
+/* ============================== V33 NEW REALMS: MEADOW (day), DESERT, STORM (rain), DAWN ============================== */
+const TAU = Math.PI * 2;
+// gentle wave used for hills and dunes: y of the surface at u (0..1 across the width)
+const waveAt = (H, y, amp, n, ph, u) => H * y + Math.sin(u * TAU * n + ph) * H * amp + Math.sin(u * TAU * n * 2.3 + ph * 1.7) * H * amp * 0.35;
+function waveD(W, H, y, amp, n, ph, bottom) {
+  const N = 20;
+  const pts = [];
+  for (let i = 0; i <= N; i++) pts.push([(i / N) * W, waveAt(H, y, amp, n, ph, i / N)]);
+  let top = `M${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < N; i++) {
+    top += `Q${pts[i][0]} ${pts[i][1]} ${(pts[i][0] + pts[i + 1][0]) / 2} ${(pts[i][1] + pts[i + 1][1]) / 2}`;
+  }
+  top += `L${pts[N][0]} ${pts[N][1]}`;
+  return { top, fill: `${top}L${W} ${bottom}L0 ${bottom}Z` };
+}
+
+// a scene that throws while drawing falls back to the grove instead of crashing the game
+class SceneGuard extends React.Component {
+  state = { bad: false };
+  static getDerivedStateFromError() {
+    return { bad: true };
+  }
+  componentDidCatch(e) {
+    try {
+      AsyncStorage.setItem('lastError', ('scene: ' + String((e && e.stack) || e)).slice(0, 1200)).catch(() => {});
+    } catch (x) {}
+  }
+  render() {
+    return this.state.bad ? this.props.fallback : this.props.children;
+  }
+}
+
+// vignette + the "world cools as you progress" tint, shared by the new scenes
+function SceneFinish({ W, H, pal, cool, vig = 0.4 }) {
+  const coolOp = useDerivedValue(() => {
+    'worklet';
+    return cool.value;
+  });
+  return (
+    <>
+      <Rect x={0} y={0} width={W} height={H}>
+        <RadialGradient c={vec(W / 2, H * 0.48)} r={H * 0.78} colors={['rgba(2,4,24,0)', 'rgba(2,4,24,0)', `rgba(2,4,24,${vig})`]} positions={[0, 0.55, 1]} />
+      </Rect>
+      <Group opacity={coolOp}>
+        <Rect x={0} y={0} width={W} height={H}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={[`rgba(${pal.tint},0)`, `rgba(${pal.tint},0.1)`, `rgba(${pal.tint},0.26)`]} />
+        </Rect>
+      </Group>
+    </>
+  );
+}
+
+// puffy cloud that drifts left to right. k must be a whole number so the 24s loop is seamless.
+function Cloud({ x0, y, w, k, clock, W, col, a = 0.95, sh = 'rgba(120,150,200,0.28)' }) {
+  const span = W + w * 2;
+  const tf = useDerivedValue(() => {
+    'worklet';
+    return [{ translateX: ((x0 + clock.value * span * k) % span) - w }, { translateY: y }];
+  });
+  const h = w * 0.3;
+  const c = `rgba(${col},${a})`;
+  return (
+    <Group transform={tf}>
+      <Oval x={w * 0.02} y={h * 0.55} width={w * 0.96} height={h * 0.62} color={c} />
+      <Circle cx={w * 0.28} cy={h * 0.62} r={h * 0.58} color={c} />
+      <Circle cx={w * 0.5} cy={h * 0.42} r={h * 0.78} color={c} />
+      <Circle cx={w * 0.72} cy={h * 0.6} r={h * 0.56} color={c} />
+      <Oval x={w * 0.08} y={h * 0.98} width={w * 0.84} height={h * 0.26} color={sh} />
+    </Group>
+  );
+}
+
+function Bird({ x0, y, s, k, ph, clock, W, col }) {
+  const span = W + 80;
+  const tf = useDerivedValue(() => {
+    'worklet';
+    const t = clock.value;
+    const flap = 0.3 + 0.7 * Math.abs(Math.sin(t * 48 * Math.PI + ph));
+    return [{ translateX: ((x0 + t * span * k) % span) - 40 }, { translateY: y + Math.sin(t * TAU * 3 + ph) * 7 }, { scale: s }, { scaleY: flap }];
+  });
+  const p = useMemo(() => svgPath('M-10 0Q-5 -8 0 0Q5 -8 10 0'), []);
+  return (
+    <Group transform={tf}>
+      <Path path={p} style="stroke" strokeWidth={2.2} strokeCap="round" strokeJoin="round" color={col} />
+    </Group>
+  );
+}
+
+function Sun({ x, y, r, c, clock }) {
+  const op = useDerivedValue(() => {
+    'worklet';
+    return 0.86 + 0.14 * Math.sin(clock.value * TAU * 3);
+  });
+  return (
+    <Group opacity={op}>
+      <Circle cx={x} cy={y} r={r * 5.5}>
+        <RadialGradient c={vec(x, y)} r={r * 5.5} colors={[`rgba(${c},0.55)`, `rgba(${c},0.16)`, `rgba(${c},0)`]} positions={[0, 0.3, 1]} />
+      </Circle>
+      <Circle cx={x} cy={y} r={r * 1.55} color={`rgba(${c},0.28)`} />
+      <Circle cx={x} cy={y} r={r}>
+        <RadialGradient c={vec(x - r * 0.2, y - r * 0.2)} r={r * 1.25} colors={['#ffffff', `rgba(${c},1)`, `rgba(${c},0.92)`]} />
+      </Circle>
+    </Group>
+  );
+}
+
+function Tree({ x, y, s, pal }) {
+  const g = (cx, cy, r) => (
+    <Circle cx={cx} cy={cy} r={r}>
+      <RadialGradient c={vec(cx - r * 0.35, cy - r * 0.4)} r={r * 1.5} colors={[pal.tree[1], pal.tree[0]]} />
+    </Circle>
+  );
+  return (
+    <>
+      <RoundedRect x={x - 3 * s} y={y - 30 * s} width={6 * s} height={32 * s} r={2 * s} color={pal.tree[0]} />
+      {g(x, y - 46 * s, 22 * s)}
+      {g(x - 15 * s, y - 36 * s, 15 * s)}
+      {g(x + 15 * s, y - 38 * s, 16 * s)}
+    </>
+  );
+}
+
+const MeadowScene = React.memo(function MeadowScene({ W, H, clock, pal, flip, seed, cool }) {
+  const S = W / 768;
+  const sd = (seed || 1) * 97;
+  const dawn = !!pal.dawn;
+  const base = dawn ? 0.6 : 0.5;
+  const geo = useMemo(() => {
+    const hp = pal.hills.map((_, i) => [base + i * 0.095, 0.028 + i * 0.006, 1.1 + i * 0.5, sd * 0.01 + i * 2.1]);
+    const hd = hp.map((p) => waveD(W, H, p[0], p[1], p[2], p[3], H));
+    const trees = Array.from({ length: 9 }, (_, i) => {
+      const li = i % 2;
+      const u = 0.04 + _h(i + 11 + sd) * 0.92;
+      const p = hp[li];
+      return { li, x: u * W, y: waveAt(H, p[0], p[1], p[2], p[3], u) + 6 * S, s: (0.55 + _h(i + 33 + sd) * 0.45) * (S * 1.6 + 0.2) * (li ? 1.15 : 0.85) };
+    });
+    const stars = Array.from({ length: 36 }, (_, i) => ({ x: _h(i * 3 + 5 + sd) * W, y: _h(i * 3 + 9 + sd) * H * 0.38 }));
+    let grass = '';
+    for (let i = 0; i < 46; i++) {
+      const x = _h(i + 70 + sd) * W;
+      const y = H * (0.86 + _h(i + 120 + sd) * 0.13);
+      const l = (10 + _h(i + 170) * 16) * (S * 1.2 + 0.4);
+      grass += `M${x} ${y}Q${x - l * 0.2} ${y - l * 0.6} ${x - l * 0.45} ${y - l}M${x} ${y}Q${x + l * 0.05} ${y - l * 0.7} ${x + l * 0.1} ${y - l * 1.1}M${x} ${y}Q${x + l * 0.25} ${y - l * 0.55} ${x + l * 0.5} ${y - l * 0.9}`;
+    }
+    const flowers = Array.from({ length: 11 }, (_, i) => ({ x: _h(i + 300 + sd) * W, y: H * (0.87 + _h(i + 340 + sd) * 0.1), r: (4 + _h(i + 380) * 3.2) * (S * 1.1 + 0.55), c: pal.fl[i % 5], k: 2 + (i % 3), ph: _h(i + 420) }));
+    const stems = flowers.map((f) => `M${f.x} ${f.y + f.r * 5}L${f.x} ${f.y}`).join('');
+    const flies = pal.flies.map((c, ci) => ({
+      c,
+      items: Array.from({ length: 6 }, (_, i) => {
+        const n = ci * 6 + i;
+        return { x: _h(n + 200 + sd) * W, y: (0.35 + _h(n + 300 + sd) * 0.55) * H, ax: 10 + _h(n + 400) * 22, ay: 8 + _h(n + 500) * 18, kx: 2 + (n % 3), ky: 2 + ((n + 1) % 3), p1: _h(n + 600) * 6.28, p2: _h(n + 700) * 6.28 };
+      }),
+    }));
+    const clouds = dawn
+      ? [[0.1, 0.12, 0.5, 1], [0.6, 0.2, 0.4, 1], [0.35, 0.3, 0.55, 2]]
+      : [[0.05, 0.1, 0.36, 1], [0.5, 0.17, 0.3, 1], [0.25, 0.3, 0.44, 2], [0.8, 0.26, 0.34, 2], [0.65, 0.4, 0.26, 1]];
+    return { hp, hd, trees, stars, grass, flowers, stems, flies, clouds };
+  }, [W, H, sd, pal]);
+  const sway = useDerivedValue(() => {
+    'worklet';
+    return [{ skewX: 0.05 * Math.sin(clock.value * TAU * 3) }];
+  });
+  const sunX = W * pal.sun[0];
+  const sunY = H * pal.sun[1];
+  const sunR = W * (dawn ? 0.1 : 0.065);
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}>
+      <Group transform={flip ? [{ translateX: W }, { scaleX: -1 }] : []}>
+        <Rect x={0} y={0} width={W} height={H}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={pal.sky} positions={[0, 0.25, 0.45, 0.62, 0.82]} />
+        </Rect>
+        {dawn && <Twinkle pts={geo.stars} k={9} ph={0.2} clock={clock} sw={2} />}
+        <Sun x={sunX} y={sunY} r={sunR} c={pal.sunc} clock={clock} />
+        {[0.35, 0.55, 0.8].map((t, i) => (
+          <Circle key={`fl${i}`} cx={sunX + (W / 2 - sunX) * t * 1.6} cy={sunY + (H * 0.5 - sunY) * t * 1.6} r={W * (0.03 + i * 0.015)} color={`rgba(${pal.sunc},${0.1 - i * 0.025})`} />
+        ))}
+        {geo.clouds.map(([fx, fy, fw, k], i) => (
+          <Cloud key={`c${i}`} x0={W * fx} y={H * fy} w={W * fw} k={k} clock={clock} W={W} col={pal.cloud} a={0.92} sh={dawn ? 'rgba(200,110,140,0.3)' : 'rgba(110,140,200,0.28)'} />
+        ))}
+        <Rays W={W} H={H} clock={clock} ray={pal.ray} />
+        {geo.hd.map((p, i) => (
+          <Group key={`h${i}`}>
+            <Path path={svgPath(p.fill)}>
+              <LinearGradient start={vec(0, H * (geo.hp[i][0] - 0.04))} end={vec(0, H)} colors={pal.hills[i]} />
+            </Path>
+            <Path path={svgPath(p.top)} style="stroke" strokeWidth={2} color={`rgba(${pal.ray},0.35)`} />
+            {geo.trees.filter((t) => t.li === i).map((t, j) => (
+              <Tree key={`t${i}${j}`} x={t.x} y={t.y} s={t.s} pal={pal} />
+            ))}
+            {i === 0 && <Mist W={W} H={H} y={H * (base + 0.03)} clock={clock} k={2} ph={0.2} a={0.35} mist={pal.mist} />}
+          </Group>
+        ))}
+        {[[0.1, 0.2, 0.9, 2, 0.1], [0.5, 0.14, 0.7, 2, 0.4], [0.3, 0.26, 1.1, 1, 0.7], [0.75, 0.3, 0.8, 1, 0.2]].map(([fx, fy, s, k, ph], i) => (
+          <Bird key={`b${i}`} x0={W * fx} y={H * fy} s={s * (S + 0.55)} k={k} ph={ph} clock={clock} W={W} col={dawn ? 'rgba(40,20,60,0.75)' : 'rgba(20,40,70,0.7)'} />
+        ))}
+        <Path path={svgPath(`M0 ${H * 0.86}Q${W * 0.3} ${H * 0.84} ${W * 0.55} ${H * 0.865}T${W} ${H * 0.85}V${H}H0Z`)}>
+          <LinearGradient start={vec(0, H * 0.82)} end={vec(0, H)} colors={pal.ground} />
+        </Path>
+        <Group transform={sway} origin={{ x: W / 2, y: H }}>
+          <Path path={svgPath(geo.grass)} style="stroke" strokeWidth={2.2} strokeCap="round" color={rgba(pal.fern, 0.85)} />
+        </Group>
+        <Path path={svgPath(geo.stems)} style="stroke" strokeWidth={1.6} color={rgba(pal.fern, 0.8)} />
+        {geo.flowers.map((f, i) => (
+          <Flower key={`f${i}`} x={f.x} y={f.y} r={f.r} c={f.c} clock={clock} k={f.k} ph={f.ph} />
+        ))}
+        {geo.flies.map((f, i) => (
+          <Flies key={`y${i}`} items={f.items} color={f.c} clock={clock} sw={3.2} />
+        ))}
+      </Group>
+      <SceneFinish W={W} H={H} pal={pal} cool={cool} vig={0.34} />
+    </Canvas>
+  );
+});
+
+function Cactus({ x, y, s, col, rim }) {
+  return (
+    <>
+      <RoundedRect x={x - 5 * s} y={y - 70 * s} width={10 * s} height={72 * s} r={5 * s} color={col} />
+      <RoundedRect x={x - 22 * s} y={y - 40 * s} width={18 * s} height={8 * s} r={4 * s} color={col} />
+      <RoundedRect x={x - 22 * s} y={y - 58 * s} width={8 * s} height={26 * s} r={4 * s} color={col} />
+      <RoundedRect x={x + 4 * s} y={y - 52 * s} width={18 * s} height={8 * s} r={4 * s} color={col} />
+      <RoundedRect x={x + 14 * s} y={y - 68 * s} width={8 * s} height={24 * s} r={4 * s} color={col} />
+      <RoundedRect x={x + 2.4 * s} y={y - 66 * s} width={2.2 * s} height={62 * s} r={1.1 * s} color={rim} />
+    </>
+  );
+}
+
+function Tumble({ W, y, r, k, clock, col }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    const u = (clock.value * k) % 1;
+    const x = u * (W + r * 4) - r * 2;
+    const bob = Math.abs(Math.sin(clock.value * TAU * 20)) * r * 0.9;
+    return [{ translateX: x }, { translateY: y - bob }, { rotate: x / r }];
+  });
+  return (
+    <Group transform={tf}>
+      <Circle cx={0} cy={0} r={r} style="stroke" strokeWidth={2} color={col}>
+        <DashPathEffect intervals={[7, 4]} />
+      </Circle>
+      <Circle cx={0} cy={0} r={r * 0.66} style="stroke" strokeWidth={1.6} color={col}>
+        <DashPathEffect intervals={[4, 5]} />
+      </Circle>
+      <Path path={svgPath(`M${-r} 0L${r} 0M0 ${-r}L0 ${r}`)} style="stroke" strokeWidth={1.4} color={col} />
+    </Group>
+  );
+}
+
+function SandDrift({ W, H, clock, col }) {
+  const pts = useMemo(() => Array.from({ length: 46 }, (_, i) => ({ x: _h(i + 800) * W, y: H * (0.62 + _h(i + 850) * 0.36), m: 3 + (i % 4), w: 3 + _h(i + 880) * 9, l: 10 + _h(i + 900) * 22 })), [W, H]);
+  const dots = useDerivedValue(() => {
+    'worklet';
+    const t = clock.value;
+    return pts.map((p) => ({ x: (p.x + t * W * p.m) % W, y: p.y + Math.sin(t * TAU * 6 + p.x) * p.w }));
+  });
+  const streaks = useDerivedValue(() => {
+    'worklet';
+    const t = clock.value;
+    const out = [];
+    for (let i = 0; i < pts.length; i += 2) {
+      const p = pts[i];
+      const x = (p.x + t * W * (p.m + 2)) % W;
+      const y = p.y + Math.sin(t * TAU * 5 + p.x) * p.w;
+      out.push({ x, y }, { x: x - p.l, y: y + 0.6 });
+    }
+    return out;
+  });
+  return (
+    <>
+      <Points points={streaks} mode="lines" style="stroke" strokeWidth={1.4} strokeCap="round" color={`rgba(${col},0.3)`} />
+      <Points points={dots} mode="points" style="stroke" strokeWidth={2} strokeCap="round" color={`rgba(${col},0.45)`} />
+    </>
+  );
+}
+
+const DesertScene = React.memo(function DesertScene({ W, H, clock, pal, flip, seed, cool }) {
+  const S = W / 768;
+  const sd = (seed || 1) * 97;
+  const night = !!pal.night;
+  const geo = useMemo(() => {
+    const dp = pal.dunes.map((_, i) => [0.6 + i * 0.1, 0.05 - i * 0.008, 0.7 + i * 0.4, sd * 0.013 + i * 1.9]);
+    const dd = dp.map((p) => waveD(W, H, p[0], p[1], p[2], p[3], H));
+    const cacti = [[0.1, 2, 1.0], [0.88, 3, 1.25], [0.62, 1, 0.7], [0.3, 2, 0.8]].map(([u, li, s], i) => {
+      const p = dp[li];
+      const uu = Math.min(0.96, Math.max(0.04, u + (_h(i + sd) - 0.5) * 0.08));
+      return { li, x: uu * W, y: waveAt(H, p[0], p[1], p[2], p[3], uu) + 4 * S, s: s * (S * 1.5 + 0.35) };
+    });
+    const stars = [[], [], []];
+    for (let i = 0; i < 66; i++) stars[i % 3].push({ x: _h(i * 3 + 5 + sd) * W, y: _h(i * 3 + 9 + sd) * H * 0.42 });
+    const mesas = [[0.04, 0.2, 0.09], [0.55, 0.24, 0.13], [0.82, 0.16, 0.075]]
+      .map(([u, w, h]) => {
+        const x = u * W, ww = w * W, hh = h * H, by = H * 0.64;
+        return `M${x} ${by}L${x + ww * 0.06} ${by - hh}L${x + ww * 0.22} ${by - hh}L${x + ww * 0.26} ${by - hh * 0.72}L${x + ww * 0.74} ${by - hh * 0.72}L${x + ww * 0.78} ${by - hh}L${x + ww * 0.94} ${by - hh}L${x + ww} ${by}Z`;
+      })
+      .join('');
+    const rocks = Array.from({ length: 6 }, (_, i) => ({ x: _h(i + 55 + sd) * W, y: H * (0.93 + _h(i + 66 + sd) * 0.06), w: W * (0.04 + _h(i + 77) * 0.05), h: H * (0.012 + _h(i + 88) * 0.014) }));
+    return { dp, dd, cacti, stars, mesas, rocks };
+  }, [W, H, sd, pal]);
+  const sx = W * pal.sun[0];
+  const sy = H * pal.sun[1];
+  return (
+    <Canvas pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: W, height: H }}>
+      <Group transform={flip ? [{ translateX: W }, { scaleX: -1 }] : []}>
+        <Rect x={0} y={0} width={W} height={H}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, H)} colors={pal.sky} positions={[0, 0.18, 0.34, 0.5, 0.62, 0.76]} />
+        </Rect>
+        <Group opacity={night ? 1 : 0.55}>
+          {geo.stars.map((g, i) => (
+            <Twinkle key={i} pts={g} k={[9, 14, 20][i]} ph={i * 0.31} clock={clock} sw={[2.2, 1.7, 1.3][i]} />
+          ))}
+        </Group>
+        {night ? <Moon W={W} H={H} clock={clock} /> : <Sun x={sx} y={sy} r={W * 0.12} c={pal.sunc} clock={clock} />}
+        <Path path={svgPath(geo.mesas)}>
+          <LinearGradient start={vec(0, H * 0.5)} end={vec(0, H * 0.66)} colors={[rgba(pal.mesa, 0.55), rgba(pal.mesa, 0.95)]} />
+        </Path>
+        <Mist W={W} H={H} y={H * 0.58} clock={clock} k={2} ph={0.1} a={0.3} mist={pal.mist} />
+        {geo.dd.map((p, i) => (
+          <Group key={`d${i}`}>
+            <Path path={svgPath(p.fill)}>
+              <LinearGradient start={vec(0, H * (geo.dp[i][0] - 0.05))} end={vec(0, H)} colors={pal.dunes[i]} />
+            </Path>
+            <Path path={svgPath(p.top)} style="stroke" strokeWidth={2.2} color={`rgba(${pal.crest},${night ? 0.5 : 0.65})`} />
+            {geo.cacti.filter((c) => c.li === i).map((c, j) => (
+              <Cactus key={`c${i}${j}`} x={c.x} y={c.y} s={c.s} col={pal.cactus} rim={`rgba(${pal.crest},0.45)`} />
+            ))}
+            {i === 0 && <Mist W={W} H={H} y={H * 0.66} clock={clock} k={3} ph={0.5} a={0.22} mist={pal.mist} />}
+          </Group>
+        ))}
+        {geo.rocks.map((r, i) => (
+          <Oval key={`r${i}`} x={r.x} y={r.y} width={r.w} height={r.h} color={pal.cactus} />
+        ))}
+        <Tumble W={W} y={H * 0.915} r={W * 0.035} k={1} clock={clock} col={`rgba(${pal.sand},0.6)`} />
+        <SandDrift W={W} H={H} clock={clock} col={pal.sand} />
+      </Group>
+      <SceneFinish W={W} H={H} pal={pal} cool={cool} vig={0.42} />
+    </Canvas>
+  );
+});
+
+/* ---------- storm: rain, puddle ripples, lightning, dark cloud deck (drawn inside ForestScene for realm 6) ---------- */
+function Rain({ W, H, clock, n, m, len, sw, col, slant }) {
+  const seeds = useMemo(
+    () => Array.from({ length: n }, (_, i) => ({ x: _h(i + 1300 + n) * (W + H * slant), y: _h(i + 1700 + n) * H, m: m + (i % 5), l: len * (0.7 + _h(i + 2100 + n) * 0.6) })),
+    [W, H, n, m, len, slant]
+  );
+  const pts = useDerivedValue(() => {
+    'worklet';
+    const t = clock.value;
+    const out = [];
+    for (let i = 0; i < seeds.length; i++) {
+      const s = seeds[i];
+      const y = (s.y + t * H * s.m) % H;
+      const x = s.x - y * slant;
+      out.push({ x, y }, { x: x - s.l * slant, y: y + s.l });
+    }
+    return out;
+  });
+  return <Points points={pts} mode="lines" style="stroke" strokeWidth={sw} strokeCap="round" color={col} />;
+}
+
+function Ripple({ cx, cy, rw, ph, k, clock }) {
+  const tf = useDerivedValue(() => {
+    'worklet';
+    const p = (clock.value * k + ph) % 1;
+    return [{ scale: 0.15 + p * 0.85 }];
+  });
+  const op = useDerivedValue(() => {
+    'worklet';
+    const p = (clock.value * k + ph) % 1;
+    return (1 - p) * 0.6;
+  });
+  return (
+    <Group transform={tf} origin={{ x: cx, y: cy }} opacity={op}>
+      <Oval x={cx - rw} y={cy - rw * 0.22} width={rw * 2} height={rw * 0.44} style="stroke" strokeWidth={1.6} color="rgba(220,240,255,0.9)" />
+    </Group>
+  );
+}
+
+function Bolt({ W, H, x, ph, clock, seed }) {
+  const d = useMemo(() => {
+    let s = `M${x} 0`;
+    let cx = x;
+    const n = 9;
+    const dy = (H * 0.52) / n;
+    let br = '';
+    for (let i = 1; i <= n; i++) {
+      cx += (_h(i * 7 + seed + x) - 0.5) * W * 0.12;
+      s += `L${cx} ${dy * i}`;
+      if (i === 4) br = `M${cx} ${dy * i}L${cx + W * 0.07} ${dy * (i + 1.5)}L${cx + W * 0.05} ${dy * (i + 3)}`;
+    }
+    return s + br;
+  }, [W, H, x, seed]);
+  const op = useDerivedValue(() => {
+    'worklet';
+    const p = (clock.value + ph) % 1;
+    if (p < 0.004) return 1;
+    if (p > 0.008 && p < 0.014) return 0.75;
+    if (p > 0.014 && p < 0.03) return 0.5 * (1 - (p - 0.014) / 0.016);
+    return 0;
+  });
+  const path = useMemo(() => svgPath(d), [d]);
+  return (
+    <Group opacity={op}>
+      <Rect x={0} y={0} width={W} height={H} color="rgba(190,215,255,0.5)" />
+      <Path path={path} style="stroke" strokeWidth={9} strokeCap="round" strokeJoin="round" color="rgba(170,200,255,0.3)" />
+      <Path path={path} style="stroke" strokeWidth={2.6} strokeCap="round" strokeJoin="round" color="#ffffff" />
+    </Group>
+  );
+}
+
+function StormClouds({ W, H, clock }) {
+  return (
+    <>
+      <Rect x={0} y={0} width={W} height={H * 0.5}>
+        <LinearGradient start={vec(0, 0)} end={vec(0, H * 0.5)} colors={['rgba(4,10,16,0.85)', 'rgba(8,20,28,0.55)', 'rgba(8,20,28,0)']} />
+      </Rect>
+      {[[0.0, 0.03, 0.7, 1], [0.45, 0.06, 0.6, 1], [0.2, 0.13, 0.8, 2], [0.7, 0.16, 0.6, 2]].map(([fx, fy, fw, k], i) => (
+        <Cloud key={i} x0={W * fx} y={H * fy} w={W * fw} k={k} clock={clock} W={W} col="14,26,36" a={0.8} sh="rgba(60,90,110,0.3)" />
+      ))}
+    </>
+  );
+}
+
+function StormFX({ W, H, clock }) {
+  return (
+    <>
+      <Rain W={W} H={H} clock={clock} n={60} m={22} len={16} sw={1} col="rgba(190,220,255,0.26)" slant={0.18} />
+      <Rain W={W} H={H} clock={clock} n={34} m={30} len={32} sw={1.8} col="rgba(225,242,255,0.5)" slant={0.18} />
+      {[[0.2, 0.93, 0.06, 0], [0.55, 0.96, 0.07, 0.33], [0.8, 0.91, 0.05, 0.66], [0.38, 0.89, 0.045, 0.5], [0.9, 0.97, 0.06, 0.15], [0.1, 0.985, 0.05, 0.8]].map(([fx, fy, fw, ph], i) => (
+        <Ripple key={i} cx={W * fx} cy={H * fy} rw={W * fw} ph={ph} k={12} clock={clock} />
+      ))}
+      <Bolt W={W} H={H} x={W * 0.25} ph={0.9} clock={clock} seed={3} />
+      <Bolt W={W} H={H} x={W * 0.72} ph={0.57} clock={clock} seed={8} />
+      <Bolt W={W} H={H} x={W * 0.45} ph={0.23} clock={clock} seed={5} />
+    </>
+  );
+}
+
+// the right scene for the realm. 4 + 7 = open sky (day / dawn), 5 = desert, 6 = storm (grove art + rain), the rest = the original forest
+function WorldScene({ realm, bio, W, H, clock, cool }) {
+  const pal = PALS[Math.min(PALS.length - 1, realm * 2 + (bio.v & 1))];
+  const c = { W, H, clock, pal, flip: !!(bio.v & 2), seed: bio.seed, cool };
+  if (realm === 4 || realm === 7) return <MeadowScene {...c} />;
+  if (realm === 5) return <DesertScene {...c} />;
+  return <ForestScene {...c} realm={realm} />;
+}
+
+/* ---------- world map: every realm gets its own sky ---------- */
+const BAND_G = [
+  ['#140e46', '#2a1c78', '#173d68'], // grove
+  ['#12307a', '#1d63b4', '#168a9a'], // lake
+  ['#5a9ae0', '#9ccdf4', '#dff2ff'], // frost
+  ['#2a0a5a', '#7a1aa8', '#c02a9a'], // neon
+  ['#2a6ad0', '#6ab4ee', '#f4e0a8'], // meadow
+  ['#2a1470', '#c0357a', '#ff9a4a'], // desert
+  ['#0c1a24', '#1c3c48', '#2e5a60'], // storm
+  ['#3a2a7a', '#e06a8a', '#ffc27a'], // dawn
+];
+function bandDeco(realm, w, h) {
+  const R = (i, s = 0) => _h(i * 13 + s * 101 + realm * 7 + 3);
+  const dots = (n, ymax, s) => Array.from({ length: n }, (_, i) => ({ x: R(i, s) * w, y: R(i, s + 1) * h * ymax }));
+  const glow = (key, x, y, r, c, a) => (
+    <Circle key={key} cx={x} cy={y} r={r}>
+      <RadialGradient c={vec(x, y)} r={r} colors={[`rgba(${c},${a})`, `rgba(${c},0)`]} />
+    </Circle>
+  );
+  const cloud = (key, x, y, s, c) => (
+    <Group key={key}>
+      <Oval x={x} y={y + s * 0.2} width={s * 1.6} height={s * 0.5} color={c} />
+      <Circle cx={x + s * 0.55} cy={y + s * 0.2} r={s * 0.34} color={c} />
+      <Circle cx={x + s * 0.95} cy={y + s * 0.28} r={s * 0.27} color={c} />
+    </Group>
+  );
+  const out = [];
+  if (realm === 0) {
+    for (let i = 0; i < 7; i++) out.push(glow(`g${i}`, R(i, 4) * w, R(i, 5) * h, 40 + R(i, 6) * 40, '255,122,217', 0.2));
+    out.push(<Points key="st" points={dots(24, 0.5, 8)} mode="points" style="stroke" strokeWidth={2} strokeCap="round" color="rgba(255,255,255,0.65)" />);
+  } else if (realm === 1) {
+    out.push(glow('m', w * 0.78, h * 0.14, 90, '210,230,255', 0.5));
+    for (let i = 0; i < 9; i++) out.push(<Oval key={`rf${i}`} x={R(i, 2) * w * 0.8} y={h * (0.5 + R(i, 3) * 0.45)} width={w * (0.1 + R(i, 4) * 0.2)} height={3} color="rgba(220,240,255,0.18)" />);
+    out.push(<Points key="st" points={dots(18, 0.4, 9)} mode="points" style="stroke" strokeWidth={2} strokeCap="round" color="rgba(255,255,255,0.7)" />);
+  } else if (realm === 2) {
+    out.push(<Points key="sn" points={dots(70, 1, 11)} mode="points" style="stroke" strokeWidth={3} strokeCap="round" color="rgba(255,255,255,0.8)" />);
+    out.push(glow('g', w * 0.3, h * 0.3, 120, '255,255,255', 0.3));
+  } else if (realm === 3) {
+    let d = '';
+    for (let y = 30; y < h; y += 46) d += `M0 ${y}L${w} ${y}`;
+    for (let x = 0; x <= w; x += 46) d += `M${x} 0L${x} ${h}`;
+    out.push(<Path key="grid" path={svgPath(d)} style="stroke" strokeWidth={1} color="rgba(0,240,255,0.14)" />);
+    out.push(glow('a', w * 0.2, h * 0.3, 110, '255,60,200', 0.3));
+    out.push(glow('b', w * 0.85, h * 0.65, 110, '0,220,255', 0.25));
+  } else if (realm === 4) {
+    out.push(glow('s', w * 0.78, h * 0.14, 110, '255,240,190', 0.7));
+    for (let i = 0; i < 4; i++) out.push(cloud(`c${i}`, R(i, 2) * w * 0.7, h * (0.05 + i * 0.2 + R(i, 3) * 0.06), 60 + R(i, 4) * 40, 'rgba(255,255,255,0.8)'));
+    out.push(<Path key="hl" path={svgPath(waveD(w, h, 0.93, 0.02, 1.4, 1.3, h).fill)} color="rgba(30,130,60,0.5)" />);
+  } else if (realm === 5) {
+    out.push(<Points key="st" points={dots(16, 0.3, 12)} mode="points" style="stroke" strokeWidth={2} strokeCap="round" color="rgba(255,235,200,0.7)" />);
+    out.push(glow('s', w * 0.3, h * 0.5, 120, '255,170,90', 0.55));
+    out.push(<Path key="d1" path={svgPath(waveD(w, h, 0.8, 0.03, 1.2, 0.6, h).fill)} color="rgba(210,100,50,0.35)" />);
+    out.push(<Path key="d2" path={svgPath(waveD(w, h, 0.9, 0.025, 1.6, 2.2, h).fill)} color="rgba(120,40,40,0.4)" />);
+  } else if (realm === 6) {
+    for (let i = 0; i < 5; i++) out.push(<Oval key={`k${i}`} x={R(i, 2) * w * 0.8 - 20} y={h * (0.02 + i * 0.09)} width={w * (0.4 + R(i, 3) * 0.4)} height={50 + R(i, 4) * 30} color="rgba(6,14,20,0.45)" />);
+    let d = '';
+    for (let i = 0; i < 70; i++) {
+      const x = R(i, 7) * (w + 60);
+      const y = R(i, 8) * h;
+      d += `M${x} ${y}L${x - 5} ${y + 16}`;
+    }
+    out.push(<Path key="rn" path={svgPath(d)} style="stroke" strokeWidth={1.2} strokeCap="round" color="rgba(200,225,255,0.22)" />);
+  } else {
+    out.push(<Points key="st" points={dots(14, 0.25, 13)} mode="points" style="stroke" strokeWidth={2} strokeCap="round" color="rgba(255,255,255,0.6)" />);
+    out.push(glow('s', w * 0.5, h * 0.9, 190, '255,210,140', 0.7));
+    for (let i = 0; i < 4; i++) out.push(<Oval key={`st${i}`} x={R(i, 2) * w * 0.6} y={h * (0.2 + i * 0.17)} width={w * (0.5 + R(i, 3) * 0.4)} height={9} color="rgba(255,190,170,0.35)" />);
+  }
+  return out;
+}
+const RealmBand = React.memo(function RealmBand({ realm, w, top, h, locked, ft, fb }) {
+  const g = BAND_G[realm] || BAND_G[0];
+  const A = 0.86;
+  const f = Math.min(0.2, 70 / h);
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', left: -40, width: w, top, height: h }}>
+      <Canvas style={{ width: w, height: h }}>
+        <Rect x={0} y={0} width={w} height={h}>
+          <LinearGradient start={vec(0, 0)} end={vec(0, h)} colors={[rgba(g[0], ft ? A : 0), rgba(g[0], A), rgba(g[1], A), rgba(g[2], A), rgba(g[2], fb ? A : 0)]} positions={[0, f, 0.5, 1 - f, 1]} />
+        </Rect>
+        {bandDeco(realm, w, h)}
+        {locked ? <Rect x={0} y={0} width={w} height={h} color="rgba(6,4,28,0.3)" /> : null}
+      </Canvas>
+    </View>
+  );
+});
+
 const ForestScene = React.memo(function ForestScene({ W, H, clock, pal, flip, seed, cool, realm }) {
   const S = W / 768;
   const sd = (seed || 1) * 97;
@@ -2338,17 +2966,20 @@ const ForestScene = React.memo(function ForestScene({ W, H, clock, pal, flip, se
         </Circle>
         {r === 2 && <Aurora W={W} H={H} clock={clock} />}
         {r === 1 && <Moon W={W} H={H} clock={clock} />}
-        {stars.map((g, i) => (
+        {r === 6 && <StormClouds W={W} H={H} clock={clock} />}
+        {r !== 6 && stars.map((g, i) => (
           <Twinkle key={i} pts={g} k={[9, 14, 20][i]} ph={i * 0.31} clock={clock} sw={[2.2, 1.7, 1.3][i]} />
         ))}
-        {sparks.map(([fx, fy, sz], i) => (
+        {r !== 6 && sparks.map(([fx, fy, sz], i) => (
           <Group key={i} transform={[{ translateX: fx * W }, { translateY: fy * H }, { scale: sz }]} opacity={0.9}>
             <Path path={svgPath(SPARK_D)} color="#ffffff" />
           </Group>
         ))}
+        {r !== 6 && (<>
         <ShootingStar x0={W * 0.26} y0={H * 0.2} dx={W * 0.22} dy={-H * 0.07} K={4} ph={0.1} clock={clock} />
         <ShootingStar x0={W * 0.55} y0={H * 0.17} dx={W * 0.24} dy={-H * 0.06} K={5} ph={0.55} clock={clock} />
         <ShootingStar x0={W * 0.1} y0={H * 0.1} dx={W * 0.2} dy={-H * 0.04} K={3} ph={0.8} clock={clock} />
+        </>)}
         <RoundedRect x={-W * 0.03} y={-10} width={W * 0.085} height={H * 0.5} r={W * 0.04} color="rgba(4,8,30,0.82)" />
         <Path path={svgPath(`M${W * 0.04} ${H * 0.1}Q${W * 0.16} ${H * 0.08} ${W * 0.26} ${H * 0.14}M${W * 0.03} ${H * 0.18}Q${W * 0.12} ${H * 0.2} ${W * 0.2} ${H * 0.27}`)} style="stroke" strokeWidth={W * 0.018} strokeCap="round" color="rgba(4,8,30,0.8)" />
         {[[0.1, 0.1, 0.1], [0.2, 0.15, 0.08], [0.06, 0.22, 0.09], [0.16, 0.26, 0.07]].map(([fx, fy, fr], i) => (
@@ -2386,6 +3017,7 @@ const ForestScene = React.memo(function ForestScene({ W, H, clock, pal, flip, se
           <Flies key={i} items={f.items} color={f.c} clock={clock} sw={3.2} />
         ))}
         {r === 2 && <Snow W={W} H={H} clock={clock} />}
+        {r === 6 && <StormFX W={W} H={H} clock={clock} />}
       </Group>
       <Rect x={0} y={0} width={W} height={H}>
         <RadialGradient c={vec(W / 2, H * 0.48)} r={H * 0.78} colors={['rgba(2,4,24,0)', 'rgba(2,4,24,0)', 'rgba(2,4,24,0.6)']} positions={[0, 0.55, 1]} />
@@ -2529,14 +3161,18 @@ const nodeX = (L) => (L > 1 && secOf(L) !== secOf(L - 1) ? nodeX(L - 1) : MAP_W 
 const nodeTop = (L) => 46 + (L - 1) * NODE_H + secOf(L) * HEAD_H;
 const mapH = () => nodeTop(MAX_LEVEL) + NODE_H + 70;
 const nodeY = (L) => nodeTop(MAX_LEVEL) - nodeTop(L) + 46; // level 1 at the bottom, MAX at the top
-const secName = (L) => REALMS[realmOf(L)].name + (L > 20 ? ' ' + ['II', 'III', 'IV', 'V'][Math.min(3, Math.floor((L - 21) / 40))] : '');
+const secName = (L) => REALMS[realmOf(L)].name + (L > 20 && realmOf(L) < 4 ? ' II' : '');
 // ---- realm covers, outer-layer scenery and bridges ----
-const REALM_CREST = ['🍄', '🌊', '🏔️', '🌆'];
+const REALM_CREST = ['🍄', '🌊', '🏔️', '🌆', '🌻', '🌵', '⛈️', '🌅'];
 const REALM_TEASE = [
   'Glowing mushrooms. Watchful owls.',
   'Rocks creep in. The Lake Spirit waits.',
   'Rocks rain down. Cracks run deep.',
   'Five colors. One final boss.',
+  'Sunlit hills. A breeze full of butterflies.',
+  'Hot sand. Long shadows. Hidden rocks.',
+  'Thunder rolls. The rain never stops.',
+  'First light on the peaks. Everything glows.',
 ];
 // scenery that fills the empty edges of the map, one set per realm (skulls and bones included)
 const REALM_PROPS = [
@@ -2544,6 +3180,10 @@ const REALM_PROPS = [
   ['🌾', '🐸', '🛶', '🦴', '💀', '🐚', '🦆', '🌿', '🪨'],
   ['🧊', '❄️', '🌲', '💀', '🦴', '⛄', '🐧', '🏔️', '🪨'],
   ['🏙️', '🤖', '📡', '🛸', '⚡', '🔌', '💿', '🧪', '👾'],
+  ['🌻', '🦋', '🐝', '🌼', '🐞', '🌳', '🐇', '🌷', '☁️'],
+  ['🌵', '🐪', '🦂', '🏜️', '🦎', '🪨', '🌴', '☀️', '🦴'],
+  ['🌧️', '☔', '🐸', '⚡', '🍃', '🌿', '🦆', '🪵', '🌫️'],
+  ['🌅', '🐓', '🦌', '🌾', '🕊️', '🌸', '🦉', '🌄', '🍃'],
 ];
 // one bridge look per realm: root bridge, rope-and-plank over water, ice span, neon light bridge
 const BRIDGE = [
@@ -2551,6 +3191,10 @@ const BRIDGE = [
   { plank: '#8a5e33', plank2: '#b27d46', rail: '#f0dcae', post: '🏮', band: 'rgba(16,88,168,0.58)', edge: '#7ff3e0', deco: ['🌾', '🐸', '🌾', '🦆', '🌾'] },
   { plank: '#bfe6fa', plank2: '#e4f6ff', rail: '#ffffff', post: '❄️', band: 'rgba(110,180,236,0.52)', edge: '#ffffff', deco: ['🧊', '❄️', '🧊', '❄️', '🧊'] },
   { plank: '#2b0e5c', plank2: '#5a1fa8', rail: '#00f5ff', post: '⚡', band: 'rgba(22,6,66,0.7)', edge: '#ff9bec', deco: ['⚡', '📡', '⚡', '🔌', '⚡'], neon: true },
+  { plank: '#9a7a4a', plank2: '#c29a5a', rail: '#fff6d0', post: '🌻', band: 'rgba(90,190,255,0.5)', edge: '#ffffff', deco: ['🌼', '🦋', '🌼', '🐝', '🌼'] },
+  { plank: '#a8683a', plank2: '#d08a4a', rail: '#ffd9a0', post: '🌵', band: 'rgba(200,90,40,0.5)', edge: '#ffc080', deco: ['🌵', '🐪', '🌵', '🦂', '🌵'] },
+  { plank: '#3a4a4a', plank2: '#5a6e6e', rail: '#9fd0ff', post: '🪵', band: 'rgba(30,60,80,0.62)', edge: '#9fd0ff', deco: ['🌧️', '🐸', '🌿', '🌧️', '🍃'] },
+  { plank: '#b0707a', plank2: '#e09a8a', rail: '#ffe0b0', post: '🌸', band: 'rgba(255,140,110,0.5)', edge: '#ffe0b0', deco: ['🌸', '🕊️', '🌸', '🌾', '🌸'] },
 ];
 const BRIDGE_W = 46;
 function Bridge({ cx, top, h, realm, open, float }) {
@@ -2595,6 +3239,19 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
   const tint = hr >= 20 || hr < 5 ? 'rgba(4,6,40,0.38)' : hr < 7 || hr >= 17 ? 'rgba(255,110,60,0.13)' : null;
   const done = useRef(false); // fresh per mount, so it scrolls once each time the menu opens
   const items = [];
+  const nSec = secOf(MAX_LEVEL) + 1;
+  const firstOfSec = (s) => {
+    let L = 1;
+    while (L < MAX_LEVEL && secOf(L) !== s) L++;
+    return L;
+  };
+  const bands = [];
+  for (let s = 0; s < nSec; s++) {
+    const f = firstOfSec(s);
+    const bTop = s === nSec - 1 ? 0 : nodeY(firstOfSec(s + 1)) + 124 - 70;
+    const bBot = s === 0 ? H : nodeY(f) + 124 + 70;
+    bands.push(<RealmBand key={`bd${s}`} realm={realmOf(f)} w={MAP_W + 80} top={bTop} h={Math.max(60, bBot - bTop)} locked={f > unlocked} ft={s === nSec - 1} fb={s === 0} />);
+  }
   for (let L = 1; L <= MAX_LEVEL; L++) {
     const x = nodeX(L), y = nodeY(L);
     const cross = L > 1 && secOf(L) !== secOf(L - 1);
@@ -2706,6 +3363,7 @@ function WorldMap({ unlocked, stars, float, onPlay, onReady, crew, buddy }) {
           }}
         />
       ))}
+      {bands}
       {tint ? <View pointerEvents="none" style={{ position: 'absolute', left: -40, right: -40, top: 0, bottom: 0, backgroundColor: tint }} /> : null}
       {items}
     </View>
@@ -2779,7 +3437,7 @@ const ACH = [
   { id: 'rk5', t: 'Rising Star', d: 'Reach rank 5', ok: (p) => rankLv(p.xp) >= 5, r: { eggs: 1 } },
 ];
 // scenes that play the first time you reach a level
-const STORY_AT = { 1: 'intro', 6: 'realm2', 10: 'boss10', 11: 'realm3', 16: 'realm4', 20: 'boss20' };
+const STORY_AT = { 1: 'intro', 6: 'realm2', 10: 'boss10', 11: 'realm3', 16: 'realm4', 20: 'boss20', 21: 'realm5', 31: 'realm6', 41: 'realm7', 61: 'realm8' };
 const STORY = {
   intro: [
     ['🦉', 'Elder Ekiro', 'The orbs are waking, little one. Something is making the realms go quiet.'],
@@ -2802,6 +3460,20 @@ const STORY = {
   ],
   boss20: [
     ['👑', 'Neon King', 'Every realm hangs on this board. Make it a legend.'],
+  ],
+  realm5: [
+    ['🐝', 'Buzzi', 'Sunshine! The Meadow is wide open, but the orbs hide in the tall grass.'],
+    ['🐝', 'Buzzi', 'Chain high and the clouds part. Faster drops ahead, little chainer.'],
+  ],
+  realm6: [
+    ['🦎', 'Zuri', 'Welcome to the Dunes. The sand shifts, but a good chain never does.'],
+    ['🦎', 'Zuri', 'Watch the cracks. The desert hides more than it shows.'],
+  ],
+  realm7: [
+    ['🐸', 'Ribbo', 'Thunder! I love this. Rain makes everything slick, so keep your columns clean.'],
+  ],
+  realm8: [
+    ['🦉', 'Elder Ekiro', 'First light. You carried a chain through every realm. The world is waking.'],
   ],
 };
 
@@ -4878,6 +5550,19 @@ function Game() {
     });
     return () => sub.remove();
   }, []);
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      const s = G.status;
+      if (s === 'playing') { pause(); return true; }
+      if (s === 'paused') { resume(); return true; }
+      if (s === 'menu') return false; // on the map: let Android leave the app
+      if (s === 'resolving' || s === 'story') return true;
+      G.status = 'menu';
+      render();
+      return true;
+    });
+    return () => sub.remove();
+  }, []);
 
   const usePower = (id) => {
     if (G.t === 'daily' || G.status !== 'playing' || !G.piece || G.used[id]) return;
@@ -5160,7 +5845,9 @@ function Game() {
     <View style={[styles.root, { backgroundColor: T.bg }]}>
       <StatusBar barStyle="light-content" hidden translucent backgroundColor="transparent" />
       <View pointerEvents="none" style={ABS_FILL}>
-        <ForestScene W={width} H={height} clock={svClock} pal={PALS[Math.min(7, realm * 2 + (bio.v & 1))]} flip={!!(bio.v & 2)} seed={bio.seed} cool={svCool} realm={realm} />
+        <SceneGuard key={realm} fallback={<ForestScene W={width} H={height} clock={svClock} pal={PALS[0]} flip={false} seed={1} cool={svCool} realm={0} />}>
+          <WorldScene realm={realm} bio={bio} W={width} H={height} clock={svClock} cool={svCool} />
+        </SceneGuard>
         {false && skyBands(T.sky).map((c, i) => (
           <View key={i} style={{ flex: 1, backgroundColor: c }} />
         ))}
@@ -5178,8 +5865,8 @@ function Game() {
         ))}
       </View>
 
-      <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: DIM }]} />
-      <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: BOARD_BACK }]} />
+      <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: T.dim || DIM }]} />
+      <View pointerEvents="none" style={[ABS_FILL, { backgroundColor: T.glass || BOARD_BACK }]} />
 
       {!MENUISH.includes(G.status) && !!G.coach && !(G.placed > 0) && (
         <View pointerEvents="none" style={{ position: 'absolute', left: Math.round(150 * hs), right: 0, top: boardTop + cell * 1.7, alignItems: 'center' }}>

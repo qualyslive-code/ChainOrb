@@ -40,3 +40,6 @@ yarn-error.*
 /ios
 /android
 *.bak.*
+
+# old build snapshots
+App.v*.js
